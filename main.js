@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, nativeTheme, Notification, Tray, Menu, powerMonitor, shell, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib');
 
 // A separate data folder for development, so experiments don't touch real tasks
 if (process.env.QUILL_DATA_DIR) app.setPath('userData', path.resolve(process.env.QUILL_DATA_DIR));
@@ -271,7 +272,29 @@ ipcMain.handle('file:save-json', async (_e, name, content) => {
   return true;
 });
 
-ipcMain.handle('notify', (_e, title, body) => {
+/* ---------- Sync folder ---------- */
+
+// Like SuperProductivity's file sync: the data is written to a folder of the user's choice
+// (often one that Google Drive or Dropbox syncs), in the same format as SP's sync-data.json.
+const syncFileName = 'quill-track-sync.json';
+
+ipcMain.handle('sync:pick-folder', async () => {
+  const res = await dialog.showOpenDialog(win, { title: 'Папка для выгрузки', properties: ['openDirectory'] });
+  return res.canceled ? '' : res.filePaths[0] || '';
+});
+
+ipcMain.handle('sync:write', (_e, dir, json) => {
+  // a cloud drive may be unmounted; don't create the folder in its place
+  if (!dir || !fs.existsSync(dir)) throw new Error('Папка не найдена. Диск подключён?');
+  // SP's format: a prefix, then base64 of gzipped JSON
+  const content = 'pf_C2__' + zlib.gzipSync(Buffer.from(json, 'utf8')).toString('base64');
+  const file = path.join(dir, syncFileName);
+  fs.writeFileSync(file + '.tmp', content);
+  fs.renameSync(file + '.tmp', file);
+  return file;
+});
+
+ipcMain.handle('notify',(_e, title, body) => {
   if (Notification.isSupported()) new Notification({ title, body }).show();
 });
 

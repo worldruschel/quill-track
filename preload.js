@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('flow', {
   saveJson: (name, content) => ipcRenderer.invoke('file:save-json', name, content),
   notify: (title, body) => ipcRenderer.invoke('notify', title, body),
   setTitlebarTheme: (dark) => ipcRenderer.invoke('theme:titlebar', dark),
+  // sync folder
+  pickSyncDir: () => ipcRenderer.invoke('sync:pick-folder'),
+  writeSync: (dir, json) => ipcRenderer.invoke('sync:write', dir, json),
   // tray & idle
   status: (s) => ipcRenderer.send('status', s),
   quitReady: () => ipcRenderer.send('app:quit-ready'),

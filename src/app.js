@@ -137,6 +137,10 @@ if (!window.flow) {
     onIdleStart: () => {},
     onIdleEnd: () => {},
     onIdleCancel: () => {},
+    pickSyncDir: async () => '',
+    writeSync: async () => {
+      throw new Error('Доступно только в приложении');
+    },
     getUpdate: async () => null,
     checkUpdate: async () => {},
     installUpdate: async () => {},
@@ -159,7 +163,15 @@ const DEFAULT_STATE = () => ({
   settings: DEFAULT_SETTINGS(),
 });
 // idleMin: minutes without mouse/keyboard before asking what to do with that time; 0 = off
-const DEFAULT_SETTINGS = () => ({ theme: 'system', closeToTray: true, idleMin: 5, trayHinted: false, autoUpdate: true });
+// folderSync.projects: null = all projects
+const DEFAULT_SETTINGS = () => ({
+  theme: 'system',
+  closeToTray: true,
+  idleMin: 5,
+  trayHinted: false,
+  autoUpdate: true,
+  folderSync: { on: false, dir: '', projects: null },
+});
 
 let state = DEFAULT_STATE();
 const ui = {
@@ -173,6 +185,7 @@ let saveTimer = null;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => window.flow.save(state), 250);
+  scheduleSync();
 }
 function saveNow() {
   clearTimeout(saveTimer);
@@ -184,11 +197,41 @@ async function load() {
   if (data && data.tasks) {
     state = Object.assign(DEFAULT_STATE(), data);
     state.settings = Object.assign(DEFAULT_SETTINGS(), data.settings);
+    state.settings.folderSync = Object.assign(DEFAULT_SETTINGS().folderSync, state.settings.folderSync);
   } else {
     seed();
   }
   // Time while the app was closed isn't counted
   if (state.current) state.current.since = Date.now();
+}
+
+/* ---------- Sync folder ---------- */
+
+// the file is rewritten a minute after the last change, not on every timer tick
+const sync = { timer: null, at: 0, error: '' };
+
+function syncProjectIds() {
+  const ids = state.settings.folderSync.projects || Object.keys(state.projects);
+  return ids.filter((id) => state.projects[id]);
+}
+function scheduleSync() {
+  const s = state.settings.folderSync;
+  if (!s.on || !s.dir || sync.timer) return;
+  sync.timer = setTimeout(writeSync, 60000);
+}
+async function writeSync() {
+  clearTimeout(sync.timer);
+  sync.timer = null;
+  const s = state.settings.folderSync;
+  if (!s.on || !s.dir) return;
+  try {
+    await window.flow.writeSync(s.dir, JSON.stringify(window.folderSync.buildSyncData(state, syncProjectIds())));
+    sync.at = Date.now();
+    sync.error = '';
+  } catch (e) {
+    sync.error = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  }
+  if (ui.view.type === 'settings') renderMain();
 }
 
 function seed() {
@@ -199,7 +242,7 @@ function seed() {
   const a = addTask({ title: 'Посмотреть, как устроен Quill Track', due: today, projectId: p.id });
   addTask({ title: 'Нажать ▶ на задаче, чтобы засечь время', parentId: a.id });
   addTask({ title: 'Открыть задачу кликом и добавить заметку', parentId: a.id });
-  addTask({ title: 'Импортировать данные из SuperProductivity (Настройки)', due: today, projectId: w.id, tagIds: [t.id] });
+  addTask({ title: 'Посмотреть отчёты за неделю', due: today, projectId: w.id, tagIds: [t.id] });
   addTask({ title: 'Перетащить задачу на проект в боковой панели', projectId: w.id, estimate: 15 * 60000 });
 }
 
@@ -1108,13 +1151,10 @@ function renderSettings() {
 
     ${renderUpdates()}
 
+    ${renderFolderSync()}
+
     <div class="card">
       <h3>Данные</h3>
-      <div class="set-row">
-        <div><div class="t">Импорт из SuperProductivity</div>
-          <div class="d">В SuperProductivity: Настройки → Синхронизация и резервное копирование → «Экспорт данных».<br/>Затем выберите полученный .json здесь. Задачи, проекты, теги и учтённое время будут перенесены.</div></div>
-        <button class="btn primary" data-action="import-sp">Импортировать…</button>
-      </div>
       <div class="set-row">
         <div><div class="t">Резервная копия</div><div class="d">Сохранить все данные в файл. Автокопия также делается раз в день.</div></div>
         <button class="btn" data-action="export">Экспорт…</button>
@@ -1138,6 +1178,57 @@ function renderSettings() {
         <div><kbd>T</kbd> на сегодня &nbsp; <kbd>1</kbd>–<kbd>4</kbd> разделы</div>
       </div>
     </div>`;
+}
+
+function renderFolderSync() {
+  const s = state.settings.folderSync;
+  const picked = new Set(syncProjectIds());
+  const projects = Object.values(state.projects).sort((a, b) => a.created - b.created);
+  const statusText = sync.error
+    ? `Не удалось выгрузить: ${esc(sync.error)}`
+    : sync.at
+      ? `Выгружено в ${fmtTimeOfDay(sync.at)}`
+      : 'Файл обновляется через минуту после изменений и при выходе';
+  return `
+    <div class="card">
+      <h3>Выгрузка в папку</h3>
+      <div class="set-row">
+        <div><div class="t">Сохранять данные в папку</div><div class="d">Задачи и учтённое время записываются в файл ${esc('quill-track-sync.json')} в выбранной папке, например в папке Google Диска или Dropbox</div></div>
+        <button class="switch ${s.on ? 'on' : ''}" data-action="toggle-sync" role="switch" aria-checked="${s.on}" title="${s.on ? 'Включено' : 'Выключено'}"><span></span></button>
+      </div>
+      ${
+        s.on
+          ? `
+      <div class="set-row">
+        <div><div class="t">Папка</div><div class="d">${esc(s.dir) || 'Не выбрана'}</div></div>
+        <button class="btn" data-action="sync-pick">Изменить…</button>
+      </div>
+      <div class="set-row">
+        <div><div class="t">Проекты</div><div class="d">Только эти проекты попадут в файл</div></div>
+        <div class="seg wrap">
+          ${projects.map((p) => `<button class="${picked.has(p.id) ? 'on' : ''}" data-sync-project="${p.id}">${esc(p.title)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="set-row">
+        <div><div class="t">Последняя выгрузка</div><div class="d">${statusText}</div></div>
+        <button class="btn" data-action="sync-now">Выгрузить сейчас</button>
+      </div>`
+          : ''
+      }
+    </div>`;
+}
+
+async function toggleFolderSync() {
+  const s = state.settings.folderSync;
+  if (!s.on && !s.dir) {
+    s.dir = await window.flow.pickSyncDir();
+    if (!s.dir) return;
+  }
+  s.on = !s.on;
+  sync.error = '';
+  save();
+  if (s.on) await writeSync();
+  renderMain();
 }
 
 /** State of the updater in main: { state, version, percent, current, portable } */
@@ -1531,30 +1622,6 @@ function toast(msg, action) {
    Import / export
    ========================================================= */
 
-function importSuperProductivity(text) {
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new Error('Файл не похож на JSON');
-  }
-  const r = window.spImport(state, json, { dayStr, colors: COLORS, baseOrder: maxOrder() + 1 });
-  saveNow();
-  return r;
-}
-
-async function doImportSp() {
-  const text = await window.flow.openJson();
-  if (!text) return;
-  try {
-    const r = importSuperProductivity(text);
-    renderAll();
-    toast(`Импортировано: ${r.nt} задач, ${r.np} проектов, ${r.nk} тегов`);
-  } catch (e) {
-    toast('Не удалось импортировать: ' + e.message);
-  }
-}
-
 async function doExport() {
   flushTracking();
   const ok = await window.flow.saveJson(`quill-track-backup-${dayStr()}.json`, JSON.stringify(state, null, 2));
@@ -1667,6 +1734,17 @@ document.addEventListener('click', (e) => {
     applyTheme();
     return renderMain();
   }
+  if ((n = el('[data-sync-project]'))) {
+    const s = state.settings.folderSync;
+    const ids = new Set(syncProjectIds());
+    const id = n.dataset.syncProject;
+    if (ids.has(id)) ids.delete(id);
+    else ids.add(id);
+    s.projects = [...ids];
+    save();
+    writeSync();
+    return renderMain();
+  }
   if ((n = el('.task'))) {
     const id = n.dataset.task;
     return openTask(ui.selected === id && $('#detail').classList.contains('open') ? null : id);
@@ -1696,10 +1774,19 @@ document.addEventListener('click', (e) => {
       sendStatus();
       renderMain();
     }
+    if (a === 'toggle-sync') toggleFolderSync();
+    if (a === 'sync-pick') {
+      window.flow.pickSyncDir().then((dir) => {
+        if (!dir) return;
+        state.settings.folderSync.dir = dir;
+        save();
+        writeSync();
+      });
+    }
+    if (a === 'sync-now') writeSync().then(() => !sync.error && toast('Файл в папке обновлён'));
     if (a === 'update-check') window.flow.checkUpdate();
     if (a === 'update-install') window.flow.installUpdate();
     if (a === 'update-open') window.flow.openRelease();
-    if (a === 'import-sp') doImportSp();
     if (a === 'export') doExport();
     if (a === 'import-flow') doImportFlow();
     if (a === 'purge-done') {
@@ -1940,6 +2027,7 @@ window.flow.onBeforeQuit(async () => {
     idle = null;
   }
   await saveNow();
+  await writeSync();
   window.flow.quitReady();
 });
 window.flow.onTrayToggle(() => {
