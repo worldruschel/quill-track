@@ -137,6 +137,11 @@ if (!window.flow) {
     onIdleStart: () => {},
     onIdleEnd: () => {},
     onIdleCancel: () => {},
+    getUpdate: async () => null,
+    checkUpdate: async () => {},
+    installUpdate: async () => {},
+    openRelease: async () => {},
+    onUpdateState: () => {},
   };
 }
 
@@ -154,7 +159,7 @@ const DEFAULT_STATE = () => ({
   settings: DEFAULT_SETTINGS(),
 });
 // idleMin: minutes without mouse/keyboard before asking what to do with that time; 0 = off
-const DEFAULT_SETTINGS = () => ({ theme: 'system', closeToTray: true, idleMin: 5, trayHinted: false });
+const DEFAULT_SETTINGS = () => ({ theme: 'system', closeToTray: true, idleMin: 5, trayHinted: false, autoUpdate: true });
 
 let state = DEFAULT_STATE();
 const ui = {
@@ -382,7 +387,7 @@ function idleStarted(from) {
   if (idle || !state.current) return;
   flushTracking();
   const t = state.tasks[state.current.taskId];
-  // the threshold minutes were already counted — take them back until the user decides
+  // the threshold minutes were already counted – take them back until the user decides
   const from2 = Math.max(from, Date.now() - 24 * 3600000);
   addSpan(t, from2, Date.now(), -1);
   idle = { taskId: t.id, from: from2 };
@@ -431,6 +436,7 @@ function sendStatus() {
     closeToTray: state.settings.closeToTray,
     idleMin: state.settings.idleMin,
     trayHinted: state.settings.trayHinted,
+    autoUpdate: state.settings.autoUpdate,
   });
 }
 
@@ -477,7 +483,7 @@ function applyTheme() {
 mql.addEventListener('change', applyTheme);
 
 /* =========================================================
-   Rendering — sidebar
+   Rendering – sidebar
    ========================================================= */
 
 function viewIs(type, id) {
@@ -544,7 +550,7 @@ function renderSidebar() {
 }
 
 /* =========================================================
-   Rendering — tracker
+   Rendering – tracker
    ========================================================= */
 
 function renderTracker() {
@@ -570,7 +576,7 @@ function renderTracker() {
 }
 
 /* =========================================================
-   Rendering — main area
+   Rendering – main area
    ========================================================= */
 
 function renderMain() {
@@ -683,7 +689,7 @@ function renderListView() {
     stats = `
       <div class="head-stats">
         <div class="stat"><div class="v" id="stat-today">${fmtDur(spentOnDay(today))}</div><div class="k">Отработано</div></div>
-        <div class="stat"><div class="v">${remaining ? fmtDur(remaining) : '—'}</div><div class="k">Осталось</div></div>
+        <div class="stat"><div class="v">${remaining ? fmtDur(remaining) : '–'}</div><div class="k">Осталось</div></div>
         <div class="stat"><div class="v">${doneToday}/${total}</div><div class="k">Готово</div></div>
       </div>`;
     progress = total ? `<div class="progress"><div style="width:${Math.round((doneToday / total) * 100)}%"></div></div>` : '';
@@ -740,7 +746,7 @@ function emptyState() {
   const v = ui.view.type;
   const msg = {
     today: ['☀️', 'На сегодня всё чисто', 'Добавьте задачу или перетащите её сюда из списка'],
-    upcoming: ['🗓️', 'Ничего не запланировано', 'Укажите срок у задачи — она появится здесь'],
+    upcoming: ['🗓️', 'Ничего не запланировано', 'Укажите срок у задачи – она появится здесь'],
     inbox: ['📥', 'Здесь пусто', 'Сюда попадают задачи, которым не выбран проект'],
   }[v] || ['✨', 'Здесь пока пусто', 'Начните с первой задачи'];
   return `<div class="empty"><div class="big">${msg[0]}</div><div class="t">${msg[1]}</div><div>${msg[2]}</div></div>`;
@@ -804,7 +810,7 @@ function taskRow(t, isSub = false) {
 }
 
 /* =========================================================
-   Rendering — detail panel
+   Rendering – detail panel
    ========================================================= */
 
 function renderDetail() {
@@ -949,7 +955,7 @@ function autoGrow(el) {
 }
 
 /* =========================================================
-   Rendering — reports
+   Rendering – reports
    ========================================================= */
 
 function renderReports() {
@@ -1061,7 +1067,7 @@ function renderReports() {
 }
 
 /* =========================================================
-   Rendering — settings
+   Rendering – settings
    ========================================================= */
 
 function renderSettings() {
@@ -1087,7 +1093,7 @@ function renderSettings() {
     <div class="card">
       <h3>Работа в фоне</h3>
       <div class="set-row">
-        <div><div class="t">Сворачивать в трей при закрытии</div><div class="d">Крестик прячет окно к часам, таймер продолжает идти. Выйти — через значок в трее → «Выход»</div></div>
+        <div><div class="t">Сворачивать в трей при закрытии</div><div class="d">Крестик прячет окно к часам, таймер продолжает идти. Выйти – через значок в трее → «Выход»</div></div>
         <button class="switch ${state.settings.closeToTray ? 'on' : ''}" data-action="toggle-tray" role="switch" aria-checked="${state.settings.closeToTray}" title="${state.settings.closeToTray ? 'Включено' : 'Выключено'}"><span></span></button>
       </div>
       <div class="set-row">
@@ -1099,6 +1105,8 @@ function renderSettings() {
         </div>
       </div>
     </div>
+
+    ${renderUpdates()}
 
     <div class="card">
       <h3>Данные</h3>
@@ -1130,6 +1138,48 @@ function renderSettings() {
         <div><kbd>T</kbd> на сегодня &nbsp; <kbd>1</kbd>–<kbd>4</kbd> разделы</div>
       </div>
     </div>`;
+}
+
+/** State of the updater in main: { state, version, percent, current, portable } */
+let update = null;
+
+function renderUpdates() {
+  if (!update) return '';
+  const v = update.version;
+  const [text, button] = {
+    dev: ['Обновления проверяются только в собранной версии', ''],
+    idle: ['', `<button class="btn" data-action="update-check">Проверить</button>`],
+    checking: ['Проверяю…', ''],
+    none: ['Установлена последняя версия', `<button class="btn" data-action="update-check">Проверить</button>`],
+    downloading: [`Загружаю версию ${v}… ${update.percent}%`, ''],
+    ready: [`Версия ${v} загружена и установится при перезапуске`, `<button class="btn primary" data-action="update-install">Перезапустить</button>`],
+    available: [`Вышла версия ${v}. Переносную версию нужно скачать заново`, `<button class="btn primary" data-action="update-open">Скачать</button>`],
+    error: ['Не удалось проверить обновления. Нет связи с GitHub?', `<button class="btn" data-action="update-check">Повторить</button>`],
+  }[update.state];
+  return `
+    <div class="card">
+      <h3>Обновления</h3>
+      <div class="set-row">
+        <div><div class="t">Quill Track ${esc(update.current)}</div><div class="d">${esc(text) || 'Новые версии выходят на GitHub'}</div></div>
+        ${button}
+      </div>
+      <div class="set-row">
+        <div><div class="t">Проверять обновления автоматически</div><div class="d">${
+          update.portable ? 'При запуске и раз в 6 часов. Если вышла новая версия, Quill Track скажет об этом' : 'При запуске и раз в 6 часов. Новая версия скачивается в фоне и ставится при следующем запуске'
+        }</div></div>
+        <button class="switch ${state.settings.autoUpdate ? 'on' : ''}" data-action="toggle-update" role="switch" aria-checked="${state.settings.autoUpdate}" title="${state.settings.autoUpdate ? 'Включено' : 'Выключено'}"><span></span></button>
+      </div>
+    </div>`;
+}
+
+function updateChanged(u) {
+  const was = update && update.state;
+  update = u;
+  if (u.state !== was) {
+    if (u.state === 'ready') toast(`Обновление ${u.version} готово`, { label: 'Перезапустить', run: () => window.flow.installUpdate() });
+    if (u.state === 'available') toast(`Вышла версия ${u.version}`, { label: 'Скачать', run: () => window.flow.openRelease() });
+  }
+  if (ui.view.type === 'settings') renderMain();
 }
 
 function renderAll() {
@@ -1371,7 +1421,7 @@ function openTimeModal(task) {
     const day = $('#m-day').value;
     if (!day) return $('#m-day').focus();
     if (!ms) {
-      hint.textContent = 'Укажите часы или минуты — или нажмите одну из кнопок выше';
+      hint.textContent = 'Укажите часы или минуты – или нажмите одну из кнопок выше';
       hint.classList.add('err');
       return dur.querySelector('.dh').focus();
     }
@@ -1640,6 +1690,15 @@ document.addEventListener('click', (e) => {
       sendStatus();
       renderMain();
     }
+    if (a === 'toggle-update') {
+      state.settings.autoUpdate = !state.settings.autoUpdate;
+      save();
+      sendStatus();
+      renderMain();
+    }
+    if (a === 'update-check') window.flow.checkUpdate();
+    if (a === 'update-install') window.flow.installUpdate();
+    if (a === 'update-open') window.flow.openRelease();
     if (a === 'import-sp') doImportSp();
     if (a === 'export') doExport();
     if (a === 'import-flow') doImportFlow();
@@ -1898,9 +1957,11 @@ window.flow.onIdleStart((from) => {
 });
 window.flow.onIdleEnd(idleEnded);
 window.flow.onIdleCancel(idleCancelled);
+window.flow.onUpdateState(updateChanged);
 
 (async function boot() {
   await load();
+  update = await window.flow.getUpdate();
   applyTheme();
   renderAll();
   setInterval(tick, 1000);

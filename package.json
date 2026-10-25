@@ -1,8 +1,8 @@
 {
   "name": "quill-track",
   "productName": "Quill Track",
-  "version": "0.1.0",
-  "description": "Задачи и учёт времени — спокойный аналог SuperProductivity для Windows",
+  "version": "0.2.0",
+  "description": "Задачи и учёт времени – спокойный аналог SuperProductivity для Windows",
   "author": "Evgenii Svalov",
   "license": "MIT",
   "homepage": "https://github.com/worldruschel/quill-track",
@@ -48,6 +48,14 @@
     "portable": {
       "artifactName": "QuillTrack-${version}-portable.exe"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "worldruschel",
+        "repo": "quill-track",
+        "releaseType": "release"
+      }
+    ],
     "directories": {
       "output": "dist"
     }
@@ -58,5 +66,8 @@
   },
   "allowScripts": {
     "electron@38.8.6": true
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

@@ -76,7 +76,7 @@
     for (const s of Object.values(all)) {
       const id = tid(s.id);
       if (state.tasks[id]) continue;
-      // In SP a parent's time and estimate are the sums of its subtasks — Quill Track sums them itself
+      // In SP a parent's time and estimate are the sums of its subtasks – Quill Track sums them itself
       const hasSubs = (s.subTaskIds || []).length > 0;
       const timeByDay = {};
       if (!hasSubs) for (const [d, v] of Object.entries(s.timeSpentOnDay || {})) if (typeof v === 'number' && v > 0) timeByDay[d] = v;

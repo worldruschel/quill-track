@@ -18,4 +18,10 @@ contextBridge.exposeInMainWorld('flow', {
   onIdleStart: on('idle:start'),
   onIdleEnd: on('idle:end'),
   onIdleCancel: on('idle:cancel'),
+  // updates
+  getUpdate: () => ipcRenderer.invoke('update:get'),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  openRelease: () => ipcRenderer.invoke('update:open'),
+  onUpdateState: on('update:state'),
 });

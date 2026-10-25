@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, nativeTheme, Notification, Tray, Menu, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, nativeTheme, Notification, Tray, Menu, powerMonitor, shell, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -28,12 +28,13 @@ let tray = null;
 let quitting = false;
 
 // What the renderer last told us (see 'status' below)
-const status = { title: '', clock: '', tracking: false, canResume: false, closeToTray: true, idleMin: 5, trayHinted: false };
+const status = { title: '', clock: '', tracking: false, canResume: false, closeToTray: true, idleMin: 5, trayHinted: false, autoUpdate: true };
 try {
   const s = JSON.parse(fs.readFileSync(dataFile, 'utf8')).settings || {};
   if (s.closeToTray === false) status.closeToTray = false;
   if (typeof s.idleMin === 'number') status.idleMin = s.idleMin;
   status.trayHinted = !!s.trayHinted;
+  if (s.autoUpdate === false) status.autoUpdate = false;
 } catch {}
 
 const gotLock = app.requestSingleInstanceLock();
@@ -84,15 +85,21 @@ function showWindow() {
   win.focus();
 }
 
-/** Asks the renderer to write the last seconds of tracked time, then quits. */
-function quitApp() {
+/** Asks the renderer to write the last seconds of tracked time, then quits (or installs a downloaded update). */
+let installOnQuit = false;
+function quitApp(install) {
   if (quitting) return;
   quitting = true;
-  if (!win || win.isDestroyed()) return app.quit();
+  installOnQuit = !!install;
+  if (!win || win.isDestroyed()) return finishQuit();
   win.webContents.send('app:before-quit');
-  setTimeout(() => app.quit(), 1500);
+  setTimeout(finishQuit, 1500);
 }
-ipcMain.on('app:quit-ready', () => app.quit());
+function finishQuit() {
+  if (installOnQuit) autoUpdater.quitAndInstall(true, true);
+  else app.quit();
+}
+ipcMain.on('app:quit-ready', finishQuit);
 app.on('before-quit', () => (quitting = true));
 
 /* ---------- Tray ---------- */
@@ -107,10 +114,10 @@ let lastMenuKey = '';
 function updateTray(force) {
   if (!tray) return;
   const tip = status.tracking
-    ? `Quill Track — ${status.title.length > 80 ? status.title.slice(0, 79) + '…' : status.title} · ${status.clock}`
-    : 'Quill Track — таймер не запущен';
+    ? `Quill Track – ${status.title.length > 80 ? status.title.slice(0, 79) + '…' : status.title} · ${status.clock}`
+    : 'Quill Track – таймер не запущен';
   tray.setToolTip(tip);
-  const key = `${status.tracking}|${status.canResume}`;
+  const key = `${status.tracking}|${status.canResume}|${update.state}`;
   if (!force && key === lastMenuKey) return;
   lastMenuKey = key;
   tray.setContextMenu(
@@ -123,7 +130,8 @@ function updateTray(force) {
         click: () => win?.webContents.send('tray:toggle'),
       },
       { type: 'separator' },
-      { label: 'Выход', click: quitApp },
+      ...(update.state === 'ready' ? [{ label: `Обновить до ${update.version} и перезапустить`, click: () => quitApp(true) }] : []),
+      { label: 'Выход', click: () => quitApp() },
     ])
   );
 }
@@ -160,6 +168,61 @@ function endIdle(back) {
   showWindow();
   win.flashFrame(true);
 }
+
+/* ---------- Updates ---------- */
+
+// The installed version downloads updates from GitHub Releases and installs them on restart.
+// The portable exe can't replace itself, so it only says a new version is out.
+const portable = !!process.env.PORTABLE_EXECUTABLE_DIR;
+const releasesApi = 'https://api.github.com/repos/worldruschel/quill-track/releases/latest';
+let autoUpdater = null;
+const update = { state: app.isPackaged ? 'idle' : 'dev', version: '', percent: 0, url: '', current: app.getVersion(), portable };
+
+function setUpdate(patch) {
+  Object.assign(update, patch);
+  win?.webContents.send('update:state', update);
+  updateTray();
+}
+
+if (app.isPackaged && !portable) {
+  autoUpdater = require('electron-updater').autoUpdater;
+  // for testing against a local server instead of GitHub
+  if (process.env.QUILL_UPDATE_URL) autoUpdater.setFeedURL({ provider: 'generic', url: process.env.QUILL_UPDATE_URL });
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('checking-for-update', () => update.state !== 'ready' && setUpdate({ state: 'checking' }));
+  autoUpdater.on('update-not-available', () => setUpdate({ state: 'none' }));
+  autoUpdater.on('update-available', (i) => setUpdate({ state: 'downloading', version: i.version, percent: 0 }));
+  autoUpdater.on('download-progress', (p) => setUpdate({ percent: Math.round(p.percent) }));
+  autoUpdater.on('update-downloaded', (i) => setUpdate({ state: 'ready', version: i.version }));
+  autoUpdater.on('error', () => update.state !== 'ready' && setUpdate({ state: 'error' }));
+}
+
+const newer = (a, b) => {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
+
+async function checkForUpdates() {
+  if (update.state === 'dev' || update.state === 'ready' || update.state === 'downloading') return;
+  if (autoUpdater) return autoUpdater.checkForUpdates().catch(() => {});
+  setUpdate({ state: 'checking' });
+  try {
+    const res = await net.fetch(releasesApi, { headers: { Accept: 'application/vnd.github+json' } });
+    if (!res.ok) throw new Error(res.status);
+    const rel = await res.json();
+    const version = String(rel.tag_name || '').replace(/^v/, '');
+    if (newer(version, app.getVersion())) setUpdate({ state: 'available', version, url: rel.html_url });
+    else setUpdate({ state: 'none' });
+  } catch {
+    setUpdate({ state: 'error' });
+  }
+}
+
+ipcMain.handle('update:get', () => update);
+ipcMain.handle('update:check', () => checkForUpdates());
+ipcMain.handle('update:install', () => update.state === 'ready' && quitApp(true));
+ipcMain.handle('update:open', () => update.url && shell.openExternal(update.url));
 
 /* ---------- Data & files ---------- */
 
@@ -223,5 +286,9 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   setInterval(checkIdle, 5000);
+  // first check shortly after start, then every 6 hours
+  const autoCheck = () => status.autoUpdate && checkForUpdates();
+  setTimeout(autoCheck, 15000);
+  setInterval(autoCheck, 6 * 3600000);
 });
 app.on('window-all-closed', () => app.quit());
