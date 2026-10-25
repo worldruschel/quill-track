@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>Quill Track</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="titlebar">
+    <div class="brand"><img class="logo" src="icon.png" alt="" />Quill Track</div>
+    <div class="tracker" id="tracker"></div>
+  </div>
+
+  <div class="app">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main" id="main"></main>
+
+    <section class="detail" id="detail" aria-hidden="true"></section>
+  </div>
+
+  <div class="modal-backdrop" id="modal" hidden></div>
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="sp-import.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
