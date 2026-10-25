@@ -10,8 +10,11 @@ contextBridge.exposeInMainWorld('flow', {
   notify: (title, body) => ipcRenderer.invoke('notify', title, body),
   setTitlebarTheme: (dark) => ipcRenderer.invoke('theme:titlebar', dark),
   // sync folder
-  pickSyncDir: () => ipcRenderer.invoke('sync:pick-folder'),
+  pickSyncDir: (title) => ipcRenderer.invoke('sync:pick-folder', title),
   writeSync: (dir, json) => ipcRenderer.invoke('sync:write', dir, json),
+  // inbox folder
+  readInbox: (dir) => ipcRenderer.invoke('inbox:read', dir),
+  finishInbox: (dir, name, error) => ipcRenderer.invoke('inbox:finish', dir, name, error),
   // tray & idle
   status: (s) => ipcRenderer.send('status', s),
   quitReady: () => ipcRenderer.send('app:quit-ready'),

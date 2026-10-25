@@ -278,8 +278,8 @@ ipcMain.handle('file:save-json', async (_e, name, content) => {
 // (often one that Google Drive or Dropbox syncs), in the same format as SP's sync-data.json.
 const syncFileName = 'quill-track-sync.json';
 
-ipcMain.handle('sync:pick-folder', async () => {
-  const res = await dialog.showOpenDialog(win, { title: 'Папка для выгрузки', properties: ['openDirectory'] });
+ipcMain.handle('sync:pick-folder', async (_e, title) => {
+  const res = await dialog.showOpenDialog(win, { title: title || 'Папка для выгрузки', properties: ['openDirectory'] });
   return res.canceled ? '' : res.filePaths[0] || '';
 });
 
@@ -294,7 +294,31 @@ ipcMain.handle('sync:write', (_e, dir, json) => {
   return file;
 });
 
-ipcMain.handle('notify',(_e, title, body) => {
+/* ---------- Inbox folder ---------- */
+
+// Other programs drop JSON files with changes here; the renderer applies them.
+// Applied files are deleted, broken ones are renamed to *.failed.json with the reason next to them.
+ipcMain.handle('inbox:read', (_e, dir) => {
+  if (!dir || !fs.existsSync(dir)) throw new Error('Папка не найдена. Диск подключён?');
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.json') && !f.endsWith('.failed.json'))
+    .sort()
+    .map((name) => path.join(dir, name))
+    // skip a file that may still be being written
+    .filter((file) => Date.now() - fs.statSync(file).mtimeMs > 3000)
+    .map((file) => ({ name: path.basename(file), text: fs.readFileSync(file, 'utf8') }));
+});
+
+ipcMain.handle('inbox:finish', (_e, dir, name, error) => {
+  const file = path.join(dir, path.basename(name));
+  if (!error) return fs.rmSync(file, { force: true });
+  const base = file.replace(/\.json$/, '');
+  fs.renameSync(file, base + '.failed.json');
+  fs.writeFileSync(base + '.failed.txt', error);
+});
+
+ipcMain.handle('notify', (_e, title, body) => {
   if (Notification.isSupported()) new Notification({ title, body }).show();
 });
 

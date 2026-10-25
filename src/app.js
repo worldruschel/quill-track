@@ -138,6 +138,8 @@ if (!window.flow) {
     onIdleEnd: () => {},
     onIdleCancel: () => {},
     pickSyncDir: async () => '',
+    readInbox: async () => [],
+    finishInbox: async () => {},
     writeSync: async () => {
       throw new Error('Доступно только в приложении');
     },
@@ -171,6 +173,7 @@ const DEFAULT_SETTINGS = () => ({
   trayHinted: false,
   autoUpdate: true,
   folderSync: { on: false, dir: '', projects: null },
+  inbox: { on: false, dir: '' },
 });
 
 let state = DEFAULT_STATE();
@@ -198,6 +201,7 @@ async function load() {
     state = Object.assign(DEFAULT_STATE(), data);
     state.settings = Object.assign(DEFAULT_SETTINGS(), data.settings);
     state.settings.folderSync = Object.assign(DEFAULT_SETTINGS().folderSync, state.settings.folderSync);
+    state.settings.inbox = Object.assign(DEFAULT_SETTINGS().inbox, state.settings.inbox);
   } else {
     seed();
   }
@@ -232,6 +236,38 @@ async function writeSync() {
     sync.error = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   }
   if (ui.view.type === 'settings') renderMain();
+}
+
+/* ---------- Inbox folder ---------- */
+
+const inboxStatus = { at: 0, error: '', last: '' };
+
+async function checkInbox() {
+  const s = state.settings.inbox;
+  if (!s.on || !s.dir) return;
+  const applied = [];
+  try {
+    const files = await window.flow.readInbox(s.dir);
+    for (const f of files) {
+      try {
+        applied.push(...window.inbox.applyInbox(state, JSON.parse(f.text), { addTask }));
+        await window.flow.finishInbox(s.dir, f.name, '');
+      } catch (e) {
+        await window.flow.finishInbox(s.dir, f.name, String(e.message || e));
+        toast(`Файл ${f.name} не принят: ${e.message || e}`);
+      }
+    }
+    inboxStatus.error = '';
+  } catch (e) {
+    inboxStatus.error = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  }
+  inboxStatus.at = Date.now();
+  if (applied.length) {
+    inboxStatus.last = applied.join(', ');
+    save();
+    renderAll();
+    toast(applied.length === 1 ? `Из папки: ${applied[0]}` : `Из папки получено изменений: ${applied.length}`);
+  } else if (ui.view.type === 'settings') renderMain();
 }
 
 function seed() {
@@ -1153,6 +1189,8 @@ function renderSettings() {
 
     ${renderFolderSync()}
 
+    ${renderInbox()}
+
     <div class="card">
       <h3>Данные</h3>
       <div class="set-row">
@@ -1216,6 +1254,51 @@ function renderFolderSync() {
           : ''
       }
     </div>`;
+}
+
+function renderInbox() {
+  const s = state.settings.inbox;
+  const statusText = inboxStatus.error
+    ? `Не удалось проверить папку: ${esc(inboxStatus.error)}`
+    : inboxStatus.last
+      ? `Последнее: ${esc(inboxStatus.last.length > 160 ? inboxStatus.last.slice(0, 159) + '…' : inboxStatus.last)}`
+      : inboxStatus.at
+        ? `Проверено в ${fmtTimeOfDay(inboxStatus.at)}, новых файлов нет`
+        : 'Папка проверяется раз в минуту';
+  return `
+    <div class="card">
+      <h3>Приём изменений из папки</h3>
+      <div class="set-row">
+        <div><div class="t">Принимать изменения из папки</div><div class="d">Другие программы и помощники кладут в папку JSON-файлы: добавить задачу, переименовать, отметить выполненной. Quill Track применяет их и удаляет файл. Формат описан в README</div></div>
+        <button class="switch ${s.on ? 'on' : ''}" data-action="toggle-inbox" role="switch" aria-checked="${s.on}" title="${s.on ? 'Включено' : 'Выключено'}"><span></span></button>
+      </div>
+      ${
+        s.on
+          ? `
+      <div class="set-row">
+        <div><div class="t">Папка</div><div class="d">${esc(s.dir) || 'Не выбрана'}</div></div>
+        <button class="btn" data-action="inbox-pick">Изменить…</button>
+      </div>
+      <div class="set-row">
+        <div><div class="t">Состояние</div><div class="d">${statusText}</div></div>
+        <button class="btn" data-action="inbox-now">Проверить сейчас</button>
+      </div>`
+          : ''
+      }
+    </div>`;
+}
+
+async function toggleInbox() {
+  const s = state.settings.inbox;
+  if (!s.on && !s.dir) {
+    s.dir = await window.flow.pickSyncDir('Папка для входящих изменений');
+    if (!s.dir) return;
+  }
+  s.on = !s.on;
+  inboxStatus.error = '';
+  save();
+  if (s.on) await checkInbox();
+  renderMain();
 }
 
 async function toggleFolderSync() {
@@ -1775,6 +1858,16 @@ document.addEventListener('click', (e) => {
       renderMain();
     }
     if (a === 'toggle-sync') toggleFolderSync();
+    if (a === 'toggle-inbox') toggleInbox();
+    if (a === 'inbox-pick') {
+      window.flow.pickSyncDir('Папка для входящих изменений').then((dir) => {
+        if (!dir) return;
+        state.settings.inbox.dir = dir;
+        save();
+        checkInbox();
+      });
+    }
+    if (a === 'inbox-now') checkInbox();
     if (a === 'sync-pick') {
       window.flow.pickSyncDir().then((dir) => {
         if (!dir) return;
@@ -2053,6 +2146,8 @@ window.flow.onUpdateState(updateChanged);
   applyTheme();
   renderAll();
   setInterval(tick, 1000);
+  setTimeout(checkInbox, 5000);
+  setInterval(checkInbox, 60000);
   // re-render at midnight so "today" rolls over
   let lastDay = dayStr();
   setInterval(() => {
