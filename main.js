@@ -231,8 +231,24 @@ ipcMain.handle('update:open', () => update.url && shell.openExternal(update.url)
 
 /* ---------- Data & files ---------- */
 
+// When the file was last read or written by this process. If it changed since then, someone else
+// (another copy of the app, a restore from backup) wrote it, and our state in memory is stale:
+// saving would overwrite their data with ours.
+let dataMtime = 0;
+// set after a conflict: refuse saves (including the one on unload) until the window reloads the file
+let dataStale = false;
+const fileMtime = () => {
+  try {
+    return fs.statSync(dataFile).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
 ipcMain.handle('data:load', () => {
   try {
+    dataStale = false;
+    dataMtime = fileMtime();
     return JSON.parse(fs.readFileSync(dataFile, 'utf8'));
   } catch {
     return null;
@@ -241,9 +257,25 @@ ipcMain.handle('data:load', () => {
 
 ipcMain.handle('data:save', (_e, data) => {
   fs.mkdirSync(dataDir, { recursive: true });
+  if (dataStale) return false;
+  if (fileMtime() !== dataMtime) {
+    // keep our version next to it and reload what is on disk
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    fs.writeFileSync(path.join(dataDir, `quill-track-data.conflict-${stamp}.json`), JSON.stringify(data));
+    dataStale = true;
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Quill Track: данные изменились на диске',
+        body: 'Файл задач изменила другая программа или копия Quill Track. Загружена версия с диска, ваша сохранена рядом как conflict-файл.',
+      }).show();
+    }
+    win?.reload();
+    return false;
+  }
   const tmp = dataFile + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(data));
   fs.renameSync(tmp, dataFile);
+  dataMtime = fileMtime();
   // One backup per day, keep the last 14
   const day = new Date().toISOString().slice(0, 10);
   const backup = path.join(backupDir, `quill-track-${day}.json`);
