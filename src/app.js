@@ -143,6 +143,8 @@ if (!window.flow) {
     writeSync: async () => {
       throw new Error('Доступно только в приложении');
     },
+    getAutostart: async () => null,
+    setAutostart: async () => null,
     getUpdate: async () => null,
     checkUpdate: async () => {},
     installUpdate: async () => {},
@@ -1029,6 +1031,8 @@ function timerLine(t) {
 
 function autoGrow(el) {
   if (!el) return;
+  // a long title (a whole day's report, say) reads as text, not as a headline
+  if (el.id === 'd-title') el.classList.toggle('long', el.value.length > 90);
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
 }
@@ -1171,6 +1175,10 @@ function renderSettings() {
 
     <div class="card">
       <h3>Работа в фоне</h3>
+      ${autostart === null ? '' : `<div class="set-row">
+        <div><div class="t">Запускать вместе с Windows</div><div class="d">Quill Track стартует при входе в систему и сразу сворачивается в трей</div></div>
+        <button class="switch ${autostart ? 'on' : ''}" data-action="toggle-autostart" role="switch" aria-checked="${autostart}" title="${autostart ? 'Включено' : 'Выключено'}"><span></span></button>
+      </div>`}
       <div class="set-row">
         <div><div class="t">Сворачивать в трей при закрытии</div><div class="d">Крестик прячет окно к часам, таймер продолжает идти. Выйти – через значок в трее → «Выход»</div></div>
         <button class="switch ${state.settings.closeToTray ? 'on' : ''}" data-action="toggle-tray" role="switch" aria-checked="${state.settings.closeToTray}" title="${state.settings.closeToTray ? 'Включено' : 'Выключено'}"><span></span></button>
@@ -1316,6 +1324,8 @@ async function toggleFolderSync() {
 
 /** State of the updater in main: { state, version, percent, current, portable } */
 let update = null;
+// start with Windows: true/false, or null when the setting is unavailable (dev, browser)
+let autostart = null;
 
 function renderUpdates() {
   if (!update) return '';
@@ -1851,6 +1861,12 @@ document.addEventListener('click', (e) => {
       sendStatus();
       renderMain();
     }
+    if (a === 'toggle-autostart') {
+      window.flow.setAutostart(!autostart).then((on) => {
+        autostart = on;
+        renderMain();
+      });
+    }
     if (a === 'toggle-update') {
       state.settings.autoUpdate = !state.settings.autoUpdate;
       save();
@@ -2143,6 +2159,7 @@ window.flow.onUpdateState(updateChanged);
 (async function boot() {
   await load();
   update = await window.flow.getUpdate();
+  autostart = await window.flow.getAutostart();
   applyTheme();
   renderAll();
   setInterval(tick, 1000);

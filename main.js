@@ -38,6 +38,9 @@ try {
   if (s.autoUpdate === false) status.autoUpdate = false;
 } catch {}
 
+// Started by Windows at logon: stay in the tray until the user opens the window
+const startHidden = process.argv.includes('--hidden');
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
 app.on('second-instance', showWindow);
@@ -48,6 +51,7 @@ function createWindow() {
     height: 820,
     minWidth: 760,
     minHeight: 520,
+    show: !startHidden,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#16171b' : '#f6f6f3',
     icon: path.join(__dirname, 'src', 'icon.png'),
     titleBarStyle: 'hidden',
@@ -316,6 +320,19 @@ ipcMain.handle('inbox:finish', (_e, dir, name, error) => {
   const base = file.replace(/\.json$/, '');
   fs.renameSync(file, base + '.failed.json');
   fs.writeFileSync(base + '.failed.txt', error);
+});
+
+/* ---------- Start with Windows ---------- */
+
+// A Run entry that opens the app straight into the tray.
+// The portable exe runs from a temporary copy, so point at the original file.
+const loginItem = { path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath, args: ['--hidden'], name: 'Quill Track' };
+const autostartOn = () => (app.isPackaged ? app.getLoginItemSettings(loginItem).openAtLogin : null);
+
+ipcMain.handle('autostart:get', autostartOn);
+ipcMain.handle('autostart:set', (_e, on) => {
+  if (app.isPackaged) app.setLoginItemSettings({ ...loginItem, openAtLogin: !!on });
+  return autostartOn();
 });
 
 ipcMain.handle('notify', (_e, title, body) => {

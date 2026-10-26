@@ -24,6 +24,9 @@ contextBridge.exposeInMainWorld('flow', {
   onIdleStart: on('idle:start'),
   onIdleEnd: on('idle:end'),
   onIdleCancel: on('idle:cancel'),
+  // start with Windows (null outside the packaged app)
+  getAutostart: () => ipcRenderer.invoke('autostart:get'),
+  setAutostart: (on) => ipcRenderer.invoke('autostart:set', on),
   // updates
   getUpdate: () => ipcRenderer.invoke('update:get'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
