@@ -2,7 +2,7 @@
 
 > **Quill Track** is a calm, minimal task manager with a built-in time tracker for Windows – a lightweight alternative to SuperProductivity. Tasks, subtasks, projects and tags, a one-click timer that keeps running in the tray, idle detection, and simple reports. Data stays on your computer. The interface is in Russian.
 
-Quill Track – спокойный и минималистичный менеджер задач со встроенным учётом времени. Задумывался как облегчённая замена SuperProductivity: всё нужное для дня под рукой, ничего лишнего. Данные хранятся только у вас на компьютере.
+Quill Track – лёгкий и минималистичный менеджер задач со встроенным учётом времени. Данные хранятся только у вас на компьютере.
 
 ![Сегодня](docs/screenshots/today.png)
 
