@@ -286,8 +286,17 @@ function seed() {
 
 /* ---------- Model helpers ---------- */
 
+// Sidebar order; projects from before manual sorting have no `order` and fall back to creation time
+function projectList() {
+  return Object.values(state.projects).sort((a, b) => (a.order ?? a.created) - (b.order ?? b.created));
+}
+function setProjectOrder(ids) {
+  ids.forEach((id, i) => state.projects[id] && (state.projects[id].order = i));
+}
+
 function addProject(title, color) {
-  const p = { id: uid(), title, color: color || COLORS[0], created: Date.now() };
+  setProjectOrder(projectList().map((p) => p.id));
+  const p = { id: uid(), title, color: color || COLORS[0], created: Date.now(), order: Object.keys(state.projects).length };
   state.projects[p.id] = p;
   save();
   return p;
@@ -591,7 +600,7 @@ function renderSidebar() {
       ${count ? `<span class="count">${count}</span>` : ''}
     </button>`;
 
-  const projects = Object.values(state.projects).sort((a, b) => a.created - b.created);
+  const projects = projectList();
   const tags = Object.values(state.tags).sort((a, b) => a.title.localeCompare(b.title, 'ru'));
 
   $('#sidebar').innerHTML = `
@@ -604,7 +613,7 @@ function renderSidebar() {
     ${projects
       .map(
         (p) => `
-      <button class="nav-item ${viewIs('project', p.id) ? 'active' : ''}" data-nav="project" data-id="${p.id}" data-drop="project">
+      <button class="nav-item ${viewIs('project', p.id) ? 'active' : ''}" data-nav="project" data-id="${p.id}" data-drop="project" draggable="true">
         <span class="ic"><span class="swatch" style="background:${p.color}"></span></span>
         <span class="label">${esc(p.title)}</span>
         <span class="count">${open((t) => t.projectId === p.id) || ''}</span>
@@ -733,12 +742,10 @@ function groupsForView() {
   } else if (v.type === 'all') {
     const noProj = open.filter((t) => !t.projectId).sort(byOrder);
     if (noProj.length) groups.push({ key: 'inbox', title: 'Без проекта', tasks: noProj });
-    Object.values(state.projects)
-      .sort((a, b) => a.created - b.created)
-      .forEach((p) => {
-        const list = open.filter((t) => t.projectId === p.id).sort(byOrder);
-        if (list.length) groups.push({ key: 'p' + p.id, title: p.title, color: p.color, tasks: list });
-      });
+    projectList().forEach((p) => {
+      const list = open.filter((t) => t.projectId === p.id).sort(byOrder);
+      if (list.length) groups.push({ key: 'p' + p.id, title: p.title, color: p.color, tasks: list });
+    });
     if (!groups.length) groups.push({ key: 'empty', tasks: [] });
   } else {
     const match =
@@ -907,9 +914,7 @@ function renderDetail() {
   const parent = t.parentId && state.tasks[t.parentId];
   const projectOpts = [`<option value="">Без проекта</option>`]
     .concat(
-      Object.values(state.projects)
-        .sort((a, b) => a.created - b.created)
-        .map((p) => `<option value="${p.id}" ${t.projectId === p.id ? 'selected' : ''}>${esc(p.title)}</option>`)
+      projectList().map((p) => `<option value="${p.id}" ${t.projectId === p.id ? 'selected' : ''}>${esc(p.title)}</option>`)
     )
     .join('');
 
@@ -1229,7 +1234,7 @@ function renderSettings() {
 function renderFolderSync() {
   const s = state.settings.folderSync;
   const picked = new Set(syncProjectIds());
-  const projects = Object.values(state.projects).sort((a, b) => a.created - b.created);
+  const projects = projectList();
   const statusText = sync.error
     ? `Не удалось выгрузить: ${esc(sync.error)}`
     : sync.at
@@ -2051,8 +2056,17 @@ document.addEventListener('keydown', (e) => {
 /* ---------- Drag & drop ---------- */
 
 let dragId = null;
+let dragProjectId = null;
 
 document.addEventListener('dragstart', (e) => {
+  const proj = e.target.closest?.('.nav-item[data-nav="project"]');
+  if (proj) {
+    dragProjectId = proj.dataset.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragProjectId);
+    requestAnimationFrame(() => proj.classList.add('dragging'));
+    return;
+  }
   const row = e.target.closest('.task[draggable]');
   if (!row) return;
   dragId = row.dataset.task;
@@ -2063,12 +2077,30 @@ document.addEventListener('dragstart', (e) => {
 
 document.addEventListener('dragend', () => {
   dragId = null;
+  dragProjectId = null;
   $$('.dragging, .drag-over-top, .drag-over-bottom, .drop-target').forEach((el) =>
     el.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom', 'drop-target')
   );
 });
 
+// Projects are reordered among themselves in the sidebar
+function projectDropSpot(e) {
+  const item = e.target.closest('.nav-item[data-nav="project"]');
+  if (!item || item.dataset.id === dragProjectId) return null;
+  const r = item.getBoundingClientRect();
+  return { item, before: e.clientY < r.top + r.height / 2 };
+}
+
 document.addEventListener('dragover', (e) => {
+  if (dragProjectId) {
+    $$('.drag-over-top, .drag-over-bottom').forEach((el) => el.classList.remove('drag-over-top', 'drag-over-bottom'));
+    const spot = projectDropSpot(e);
+    if (spot) {
+      e.preventDefault();
+      spot.item.classList.add(spot.before ? 'drag-over-top' : 'drag-over-bottom');
+    }
+    return;
+  }
   if (!dragId) return;
   const nav = e.target.closest('[data-drop]');
   const row = e.target.closest('.task[draggable]');
@@ -2084,6 +2116,17 @@ document.addEventListener('dragover', (e) => {
 });
 
 document.addEventListener('drop', (e) => {
+  if (dragProjectId) {
+    const spot = projectDropSpot(e);
+    if (!spot) return;
+    e.preventDefault();
+    const ids = projectList().map((p) => p.id).filter((id) => id !== dragProjectId);
+    ids.splice(ids.indexOf(spot.item.dataset.id) + (spot.before ? 0 : 1), 0, dragProjectId);
+    setProjectOrder(ids);
+    save();
+    renderAll();
+    return;
+  }
   if (!dragId) return;
   e.preventDefault();
   const t = state.tasks[dragId];

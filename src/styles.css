@@ -122,6 +122,13 @@ input, textarea { user-select: text; }
 .nav-item .swatch { width: 10px; height: 10px; border-radius: 4px; }
 .nav-item .hash { color: var(--text-3); font-weight: 600; }
 .nav-item.drop-target { background: var(--accent-soft); outline: 1px dashed var(--accent); }
+.nav-item[draggable] { position: relative; }
+.nav-item.dragging { opacity: 0.4; }
+.nav-item.drag-over-top::before, .nav-item.drag-over-bottom::after {
+  content: ""; position: absolute; left: 8px; right: 8px; height: 2px; background: var(--accent); border-radius: 2px;
+}
+.nav-item.drag-over-top::before { top: -2px; }
+.nav-item.drag-over-bottom::after { bottom: -2px; }
 
 .nav-section {
   display: flex; align-items: center; justify-content: space-between;
