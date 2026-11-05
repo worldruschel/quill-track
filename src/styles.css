@@ -195,6 +195,7 @@ input, textarea { user-select: text; }
 }
 .task.drag-over-top::before { top: -4px; }
 .task.drag-over-bottom::after { bottom: -4px; }
+.task.sub[draggable] { cursor: grab; }
 .task.sub { margin-left: 34px; padding-top: 6px; padding-bottom: 6px; background: var(--surface-2); }
 
 .check {
@@ -313,7 +314,13 @@ select.field-input { appearance: none; cursor: pointer; }
 }
 .d-notes:focus { border-color: var(--accent); }
 .subs { display: flex; flex-direction: column; gap: 2px; }
-.sub-row { display: flex; align-items: center; gap: 10px; padding: 5px 6px; border-radius: 8px; }
+.sub-row { display: flex; align-items: center; gap: 10px; padding: 5px 6px; border-radius: 8px; position: relative; cursor: grab; }
+.sub-row.dragging { opacity: 0.4; }
+.sub-row.drag-over-top::before, .sub-row.drag-over-bottom::after {
+  content: ""; position: absolute; left: 6px; right: 6px; height: 2px; background: var(--accent); border-radius: 2px;
+}
+.sub-row.drag-over-top::before { top: -1px; }
+.sub-row.drag-over-bottom::after { bottom: -1px; }
 .sub-row:hover { background: var(--hover); }
 .sub-row .check { width: 17px; height: 17px; }
 .sub-row.done .check { background: var(--success); border-color: var(--success); color: #fff; }
@@ -403,6 +410,9 @@ select.field-input { appearance: none; cursor: pointer; }
 .colors { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
 .colors button { width: 26px; height: 26px; border-radius: 8px; border: 2px solid transparent; }
 .colors button.on { border-color: var(--text); }
+.lang-modal h3 { text-align: center; }
+.lang-opts { display: flex; justify-content: center; gap: 10px; }
+.lang-opts .btn { flex: 1; padding: 10px 14px; }
 .modal .actions { display: flex; justify-content: space-between; gap: 8px; }
 .modal .actions .r { display: flex; gap: 8px; margin-left: auto; }
 

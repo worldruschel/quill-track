@@ -1,7 +1,7 @@
 {
   "name": "quill-track",
   "productName": "Quill Track",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "Задачи и учёт времени – спокойный аналог SuperProductivity для Windows",
   "author": "Evgenii Svalov",
   "license": "MIT",
@@ -40,9 +40,9 @@
       "shortcutName": "Quill Track",
       "runAfterFinish": true,
       "installerLanguages": [
-        "ru_RU"
+        "ru_RU",
+        "en_US"
       ],
-      "language": "1049",
       "artifactName": "QuillTrack-Setup-${version}.exe"
     },
     "portable": {

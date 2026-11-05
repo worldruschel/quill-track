@@ -13,6 +13,7 @@
  * Works in the renderer (window.inbox) and in Node (module.exports).
  */
 (function (root) {
+  const { tr } = root.i18n || require('./i18n.js');
   const sameId = (a, b) => a === b || a === 'sp_' + b;
 
   function projectByTitle(state, title) {
@@ -38,10 +39,10 @@
   }
 
   function findOne(state, f) {
-    if (!f || typeof f !== 'object' || !Object.keys(f).length) throw new Error('не указано, какую задачу искать (find)');
+    if (!f || typeof f !== 'object' || !Object.keys(f).length) throw new Error(tr('не указано, какую задачу искать (find)'));
     const hits = Object.values(state.tasks).filter((t) => matches(state, t, f));
-    if (!hits.length) throw new Error('задача не найдена: ' + JSON.stringify(f));
-    if (hits.length > 1) throw new Error(`найдено ${hits.length} задач, нужна одна: ` + JSON.stringify(f));
+    if (!hits.length) throw new Error(tr('задача не найдена: {what}', { what: JSON.stringify(f) }));
+    if (hits.length > 1) throw new Error(tr('найдено {n} задач, нужна одна: {what}', { n: hits.length, what: JSON.stringify(f) }));
     return hits[0];
   }
 
@@ -66,26 +67,26 @@
   function applyInbox(state, json, { addTask }) {
     const done = [];
     for (const c of toList(json)) {
-      if (!c || typeof c !== 'object') throw new Error('команда должна быть объектом');
+      if (!c || typeof c !== 'object') throw new Error(tr('команда должна быть объектом'));
       if (c.action === 'update') {
         const t = findOne(state, c.find);
         applySet(t, c.set || {});
-        done.push(`изменена «${t.title}»`);
+        done.push(tr('изменена «{title}»', { title: t.title }));
       } else if (c.action === 'add') {
         const d = c.task || {};
-        if (!d.title) throw new Error('у новой задачи нет названия (task.title)');
+        if (!d.title) throw new Error(tr('у новой задачи нет названия (task.title)'));
         const data = { title: String(d.title), notes: d.notes || '', due: d.due || null };
         if (d.parent) data.parentId = findOne(state, d.parent).id;
         else if (d.project) {
           const p = projectByTitle(state, d.project);
-          if (!p) throw new Error('нет проекта «' + d.project + '»');
+          if (!p) throw new Error(tr('нет проекта «{name}»', { name: d.project }));
           data.projectId = p.id;
         }
         const t = addTask(data);
         if (d.done) applySet(t, { done: true });
-        done.push(`добавлена «${t.title}»`);
+        done.push(tr('добавлена «{title}»', { title: t.title }));
       } else {
-        throw new Error('неизвестное действие: ' + c.action);
+        throw new Error(tr('неизвестное действие: {action}', { action: c.action }));
       }
     }
     return done;

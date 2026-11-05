@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain, dialog, nativeTheme, Notification, Tray, Me
 const path = require('path');
 const fs = require('fs');
 const zlib = require('zlib');
+const i18n = require('./src/i18n.js');
+const { tr } = i18n;
 
 // A separate data folder for development, so experiments don't touch real tasks
 if (process.env.QUILL_DATA_DIR) app.setPath('userData', path.resolve(process.env.QUILL_DATA_DIR));
@@ -29,13 +31,16 @@ let tray = null;
 let quitting = false;
 
 // What the renderer last told us (see 'status' below)
-const status = { title: '', clock: '', tracking: false, canResume: false, closeToTray: true, idleMin: 5, trayHinted: false, autoUpdate: true };
+const status = { title: '', clock: '', tracking: false, canResume: false, closeToTray: true, idleMin: 5, trayHinted: false, autoUpdate: true, language: '' };
 try {
   const s = JSON.parse(fs.readFileSync(dataFile, 'utf8')).settings || {};
   if (s.closeToTray === false) status.closeToTray = false;
   if (typeof s.idleMin === 'number') status.idleMin = s.idleMin;
   status.trayHinted = !!s.trayHinted;
   if (s.autoUpdate === false) status.autoUpdate = false;
+  // data from before languages existed is in Russian
+  status.language = s.language || 'ru';
+  i18n.setLang(status.language);
 } catch {}
 
 // Started by Windows at logon: stay in the tray until the user opens the window
@@ -76,8 +81,8 @@ function createWindow() {
       win.webContents.send('tray:hinted');
       tray.displayBalloon({
         iconType: 'info',
-        title: 'Quill Track работает в трее',
-        content: 'Таймер продолжает идти. Чтобы выйти, нажмите на значок правой кнопкой → «Выход».',
+        title: tr('Quill Track работает в трее'),
+        content: tr('Таймер продолжает идти. Чтобы выйти, нажмите на значок правой кнопкой → «Выход».'),
       });
     }
   });
@@ -120,29 +125,30 @@ function updateTray(force) {
   if (!tray) return;
   const tip = status.tracking
     ? `Quill Track – ${status.title.length > 80 ? status.title.slice(0, 79) + '…' : status.title} · ${status.clock}`
-    : 'Quill Track – таймер не запущен';
+    : tr('Quill Track – таймер не запущен');
   tray.setToolTip(tip);
-  const key = `${status.tracking}|${status.canResume}|${update.state}`;
+  const key = `${status.tracking}|${status.canResume}|${update.state}|${i18n.lang()}`;
   if (!force && key === lastMenuKey) return;
   lastMenuKey = key;
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Открыть', click: showWindow },
+      { label: tr('Открыть'), click: showWindow },
       { type: 'separator' },
       {
-        label: status.tracking ? 'Пауза' : 'Продолжить таймер',
+        label: status.tracking ? tr('Пауза') : tr('Продолжить таймер'),
         enabled: status.tracking || status.canResume,
         click: () => win?.webContents.send('tray:toggle'),
       },
       { type: 'separator' },
-      ...(update.state === 'ready' ? [{ label: `Обновить до ${update.version} и перезапустить`, click: () => quitApp(true) }] : []),
-      { label: 'Выход', click: () => quitApp() },
+      ...(update.state === 'ready' ? [{ label: tr('Обновить до {version} и перезапустить', { version: update.version }), click: () => quitApp(true) }] : []),
+      { label: tr('Выход'), click: () => quitApp() },
     ])
   );
 }
 
 ipcMain.on('status', (_e, s) => {
   Object.assign(status, s);
+  if (s.language) i18n.setLang(s.language);
   updateTray();
   // timer stopped or detection switched off while away; a click means the user is back
   if (!status.tracking || !status.idleMin) endIdle(powerMonitor.getSystemIdleTime() < 5);
@@ -181,7 +187,29 @@ function endIdle(back) {
 const portable = !!process.env.PORTABLE_EXECUTABLE_DIR;
 const releasesApi = 'https://api.github.com/repos/worldruschel/quill-track/releases/latest';
 let autoUpdater = null;
-const update = { state: app.isPackaged ? 'idle' : 'dev', version: '', percent: 0, url: '', current: app.getVersion(), portable };
+const update = { state: app.isPackaged ? 'idle' : 'dev', version: '', percent: 0, url: '', current: app.getVersion(), portable, error: null };
+// GitHub sometimes answers with a 5xx for a moment, so a failed check is repeated before it is reported
+const retryDelays = (process.env.QUILL_UPDATE_RETRY_MS || '5000,15000,40000').split(',').map(Number);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let checking = false;
+
+/** What went wrong, for the Settings screen: { kind, code } */
+function describeUpdateError(e) {
+  const text = String((e && e.message) || e);
+  // electron-updater's HttpError carries statusCode; when it wraps one, only the text is left
+  const code = (e && e.statusCode > 0 && e.statusCode) || (text.match(/HttpError: (\d{3})/) || [])[1];
+  if (code) return { kind: 'http', code };
+  return { kind: /net::ERR_/.test(text) ? 'network' : 'other' };
+}
+
+function logUpdate(line) {
+  const file = path.join(dataDir, 'update.log');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    if (fs.existsSync(file) && fs.statSync(file).size > 64 * 1024) fs.rmSync(file);
+    fs.appendFileSync(file, `${new Date().toISOString()} ${line}\n`);
+  } catch {}
+}
 
 function setUpdate(patch) {
   Object.assign(update, patch);
@@ -194,12 +222,20 @@ if (app.isPackaged && !portable) {
   // for testing against a local server instead of GitHub
   if (process.env.QUILL_UPDATE_URL) autoUpdater.setFeedURL({ provider: 'generic', url: process.env.QUILL_UPDATE_URL });
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('checking-for-update', () => update.state !== 'ready' && setUpdate({ state: 'checking' }));
+  autoUpdater.logger = null;
   autoUpdater.on('update-not-available', () => setUpdate({ state: 'none' }));
-  autoUpdater.on('update-available', (i) => setUpdate({ state: 'downloading', version: i.version, percent: 0 }));
+  autoUpdater.on('update-available', (i) => {
+    checking = false; // from here on, errors belong to the download
+    setUpdate({ state: 'downloading', version: i.version, percent: 0 });
+  });
   autoUpdater.on('download-progress', (p) => setUpdate({ percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (i) => setUpdate({ state: 'ready', version: i.version }));
-  autoUpdater.on('error', () => update.state !== 'ready' && setUpdate({ state: 'error' }));
+  // a failed check also rejects its promise, and checkForUpdates() deals with it there
+  autoUpdater.on('error', (e) => {
+    if (checking || update.state === 'ready') return;
+    logUpdate(`download failed: ${String((e && e.message) || e).split('\n')[0]}`);
+    setUpdate({ state: 'error', error: { kind: 'download' } });
+  });
 }
 
 const newer = (a, b) => {
@@ -208,20 +244,31 @@ const newer = (a, b) => {
   return false;
 };
 
+/** The portable exe can't update itself, so it only asks GitHub for the latest version. */
+async function checkPortable() {
+  const res = await net.fetch(releasesApi, { headers: { Accept: 'application/vnd.github+json' } });
+  if (!res.ok) throw new Error(`HttpError: ${res.status}`);
+  const rel = await res.json();
+  const version = String(rel.tag_name || '').replace(/^v/, '');
+  if (newer(version, app.getVersion())) setUpdate({ state: 'available', version, url: rel.html_url });
+  else setUpdate({ state: 'none' });
+}
+
 async function checkForUpdates() {
-  if (update.state === 'dev' || update.state === 'ready' || update.state === 'downloading') return;
-  if (autoUpdater) return autoUpdater.checkForUpdates().catch(() => {});
-  setUpdate({ state: 'checking' });
-  try {
-    const res = await net.fetch(releasesApi, { headers: { Accept: 'application/vnd.github+json' } });
-    if (!res.ok) throw new Error(res.status);
-    const rel = await res.json();
-    const version = String(rel.tag_name || '').replace(/^v/, '');
-    if (newer(version, app.getVersion())) setUpdate({ state: 'available', version, url: rel.html_url });
-    else setUpdate({ state: 'none' });
-  } catch {
-    setUpdate({ state: 'error' });
+  if (checking || update.state === 'dev' || update.state === 'ready' || update.state === 'downloading') return;
+  checking = true;
+  setUpdate({ state: 'checking', error: null });
+  for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+    try {
+      await (autoUpdater ? autoUpdater.checkForUpdates() : checkPortable());
+      break;
+    } catch (e) {
+      logUpdate(`check attempt ${attempt + 1} failed: ${String((e && e.message) || e).split('\n')[0]}`);
+      if (attempt === retryDelays.length) setUpdate({ state: 'error', error: describeUpdateError(e) });
+      else await sleep(retryDelays[attempt]);
+    }
   }
+  checking = false;
 }
 
 ipcMain.handle('update:get', () => update);
@@ -265,8 +312,8 @@ ipcMain.handle('data:save', (_e, data) => {
     dataStale = true;
     if (Notification.isSupported()) {
       new Notification({
-        title: 'Quill Track: данные изменились на диске',
-        body: 'Файл задач изменила другая программа или копия Quill Track. Загружена версия с диска, ваша сохранена рядом как conflict-файл.',
+        title: tr('Quill Track: данные изменились на диске'),
+        body: tr('Файл задач изменила другая программа или копия Quill Track. Загружена версия с диска, ваша сохранена рядом как conflict-файл.'),
       }).show();
     }
     win?.reload();
@@ -290,7 +337,7 @@ ipcMain.handle('data:save', (_e, data) => {
 
 ipcMain.handle('file:open-json', async () => {
   const res = await dialog.showOpenDialog(win, {
-    title: 'Выберите файл резервной копии',
+    title: tr('Выберите файл резервной копии'),
     filters: [{ name: 'JSON', extensions: ['json'] }],
     properties: ['openFile'],
   });
@@ -315,13 +362,13 @@ ipcMain.handle('file:save-json', async (_e, name, content) => {
 const syncFileName = 'quill-track-sync.json';
 
 ipcMain.handle('sync:pick-folder', async (_e, title) => {
-  const res = await dialog.showOpenDialog(win, { title: title || 'Папка для выгрузки', properties: ['openDirectory'] });
+  const res = await dialog.showOpenDialog(win, { title: title || tr('Папка для выгрузки'), properties: ['openDirectory'] });
   return res.canceled ? '' : res.filePaths[0] || '';
 });
 
 ipcMain.handle('sync:write', (_e, dir, json) => {
   // a cloud drive may be unmounted; don't create the folder in its place
-  if (!dir || !fs.existsSync(dir)) throw new Error('Папка не найдена. Диск подключён?');
+  if (!dir || !fs.existsSync(dir)) throw new Error(tr('Папка не найдена. Диск подключён?'));
   // SP's format: a prefix, then base64 of gzipped JSON
   const content = 'pf_C2__' + zlib.gzipSync(Buffer.from(json, 'utf8')).toString('base64');
   const file = path.join(dir, syncFileName);
@@ -335,7 +382,7 @@ ipcMain.handle('sync:write', (_e, dir, json) => {
 // Other programs drop JSON files with changes here; the renderer applies them.
 // Applied files are deleted, broken ones are renamed to *.failed.json with the reason next to them.
 ipcMain.handle('inbox:read', (_e, dir) => {
-  if (!dir || !fs.existsSync(dir)) throw new Error('Папка не найдена. Диск подключён?');
+  if (!dir || !fs.existsSync(dir)) throw new Error(tr('Папка не найдена. Диск подключён?'));
   return fs
     .readdirSync(dir)
     .filter((f) => f.endsWith('.json') && !f.endsWith('.failed.json'))
@@ -378,6 +425,8 @@ ipcMain.handle('theme:titlebar', (_e, dark) => {
 
 app.whenReady().then(() => {
   if (!gotLock) return;
+  // no saved language yet: the tray follows the system until the user picks one
+  if (!status.language) i18n.setLang(i18n.fromLocale(app.getLocale()));
   app.setAppUserModelId('app.quilltrack');
   createWindow();
   createTray();

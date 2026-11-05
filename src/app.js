@@ -24,31 +24,50 @@ function parseDay(str) {
   return new Date(y, m - 1, d);
 }
 
-const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-const WEEKDAYS_LONG = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+const { tr, trn } = window.i18n;
+
+const DATE_WORDS = {
+  ru: {
+    months: ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'],
+    weekdays: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'],
+    weekdaysLong: ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'],
+  },
+  en: {
+    months: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+    weekdays: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    weekdaysLong: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+  },
+};
+const dateWords = () => DATE_WORDS[i18n.lang()];
+/** "5 ноя" / "Nov 5" */
+function dayMonth(d) {
+  const month = dateWords().months[d.getMonth()];
+  return i18n.lang() === 'en' ? `${month} ${d.getDate()}` : `${d.getDate()} ${month}`;
+}
 
 function fmtDate(str) {
   const d = parseDay(str);
-  const s = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  const s = dayMonth(d);
   return d.getFullYear() === new Date().getFullYear() ? s : `${s} ${d.getFullYear()}`;
 }
 function relDate(str) {
   const t = dayStr();
-  if (str === t) return 'Сегодня';
-  if (str === addDays(t, 1)) return 'Завтра';
-  if (str === addDays(t, -1)) return 'Вчера';
+  if (str === t) return tr('Сегодня');
+  if (str === addDays(t, 1)) return tr('Завтра');
+  if (str === addDays(t, -1)) return tr('Вчера');
   return fmtDate(str);
 }
 
 function fmtDur(ms) {
-  if (!ms || ms < 0) return '0м';
+  const uh = tr('ч');
+  const um = tr('м');
+  if (!ms || ms < 0) return `0${um}`;
   const h = Math.floor(ms / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
-  if (h && m) return `${h}ч ${m}м`;
-  if (h) return `${h}ч`;
-  if (m) return `${m}м`;
-  return '<1м';
+  if (h && m) return `${h}${uh} ${m}${um}`;
+  if (h) return `${h}${uh}`;
+  if (m) return `${m}${um}`;
+  return `<1${um}`;
 }
 function fmtClock(ms) {
   const s = Math.floor((ms || 0) / 1000);
@@ -84,8 +103,8 @@ function durField(ms, attrs = '') {
   const h = Math.floor(total / 60);
   const m = total % 60;
   return `<span class="dur" ${attrs}>
-    <input type="number" class="dh" min="0" max="999" step="1" value="${ms ? h : ''}" placeholder="0" aria-label="часы" /><span class="u">ч</span>
-    <input type="number" class="dm" min="0" max="59" step="5" value="${ms ? m : ''}" placeholder="0" aria-label="минуты" /><span class="u">мин</span>
+    <input type="number" class="dh" min="0" max="999" step="1" value="${ms ? h : ''}" placeholder="0" aria-label="${tr('часы')}" /><span class="u">${tr('ч')}</span>
+    <input type="number" class="dm" min="0" max="59" step="5" value="${ms ? m : ''}" placeholder="0" aria-label="${tr('минуты')}" /><span class="u">${tr('мин')}</span>
   </span>`;
 }
 /** Reads a durField; minutes over 59 simply roll into hours. */
@@ -141,7 +160,7 @@ if (!window.flow) {
     readInbox: async () => [],
     finishInbox: async () => {},
     writeSync: async () => {
-      throw new Error('Доступно только в приложении');
+      throw new Error(tr('Доступно только в приложении'));
     },
     getAutostart: async () => null,
     setAutostart: async () => null,
@@ -169,6 +188,7 @@ const DEFAULT_STATE = () => ({
 // idleMin: minutes without mouse/keyboard before asking what to do with that time; 0 = off
 // folderSync.projects: null = all projects
 const DEFAULT_SETTINGS = () => ({
+  language: '', // chosen on first start; data from before languages existed stays in Russian
   theme: 'system',
   closeToTray: true,
   idleMin: 5,
@@ -204,9 +224,14 @@ async function load() {
     state.settings = Object.assign(DEFAULT_SETTINGS(), data.settings);
     state.settings.folderSync = Object.assign(DEFAULT_SETTINGS().folderSync, state.settings.folderSync);
     state.settings.inbox = Object.assign(DEFAULT_SETTINGS().inbox, state.settings.inbox);
+    state.settings.language ||= 'ru';
   } else {
+    // first start: the sample tasks are written in the language picked here
+    state.settings.language = await pickLanguage();
+    i18n.setLang(state.settings.language);
     seed();
   }
+  i18n.setLang(state.settings.language);
   // Time while the app was closed isn't counted
   if (state.current) state.current.since = Date.now();
 }
@@ -242,8 +267,7 @@ async function writeSync() {
 
 /* ---------- Inbox folder ---------- */
 
-const inboxStatus = { at: 0, error: '', last: '' };
-
+// Not shown in Settings: it is for automation, switched on in the data file (see README).
 async function checkInbox() {
   const s = state.settings.inbox;
   if (!s.on || !s.dir) return;
@@ -256,32 +280,29 @@ async function checkInbox() {
         await window.flow.finishInbox(s.dir, f.name, '');
       } catch (e) {
         await window.flow.finishInbox(s.dir, f.name, String(e.message || e));
-        toast(`Файл ${f.name} не принят: ${e.message || e}`);
+        toast(tr('Файл {name} не принят: {error}', { name: f.name, error: e.message || e }));
       }
     }
-    inboxStatus.error = '';
-  } catch (e) {
-    inboxStatus.error = String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  } catch {
+    return; // the folder is unavailable right now (a drive not connected); the next check tries again
   }
-  inboxStatus.at = Date.now();
   if (applied.length) {
-    inboxStatus.last = applied.join(', ');
     save();
     renderAll();
-    toast(applied.length === 1 ? `Из папки: ${applied[0]}` : `Из папки получено изменений: ${applied.length}`);
-  } else if (ui.view.type === 'settings') renderMain();
+    toast(applied.length === 1 ? tr('Из папки: {change}', { change: applied[0] }) : tr('Из папки получено изменений: {n}', { n: applied.length }));
+  }
 }
 
 function seed() {
-  const p = addProject('Личное', COLORS[0]);
-  const w = addProject('Работа', COLORS[2]);
-  const t = addTag('важно', COLORS[6]);
+  const p = addProject(tr('Личное'), COLORS[0]);
+  const w = addProject(tr('Работа'), COLORS[2]);
+  const t = addTag(tr('важно'), COLORS[6]);
   const today = dayStr();
-  const a = addTask({ title: 'Посмотреть, как устроен Quill Track', due: today, projectId: p.id });
-  addTask({ title: 'Нажать ▶ на задаче, чтобы засечь время', parentId: a.id });
-  addTask({ title: 'Открыть задачу кликом и добавить заметку', parentId: a.id });
-  addTask({ title: 'Посмотреть отчёты за неделю', due: today, projectId: w.id, tagIds: [t.id] });
-  addTask({ title: 'Перетащить задачу на проект в боковой панели', projectId: w.id, estimate: 15 * 60000 });
+  const a = addTask({ title: tr('Посмотреть, как устроен Quill Track'), due: today, projectId: p.id });
+  addTask({ title: tr('Нажать ▶ на задаче, чтобы засечь время'), parentId: a.id });
+  addTask({ title: tr('Открыть задачу кликом и добавить заметку'), parentId: a.id });
+  addTask({ title: tr('Посмотреть отчёты за неделю'), due: today, projectId: w.id, tagIds: [t.id] });
+  addTask({ title: tr('Перетащить задачу на проект в боковой панели'), projectId: w.id, estimate: 15 * 60000 });
 }
 
 /* ---------- Model helpers ---------- */
@@ -520,13 +541,14 @@ function sendStatus() {
   const cur = state.current && state.tasks[state.current.taskId];
   window.flow.status({
     tracking: !!cur,
-    title: cur ? cur.title || 'Без названия' : '',
+    title: cur ? cur.title || tr('Без названия') : '',
     clock: cur ? fmtClock(totalTime(cur)) : '',
     canResume: !!state.tasks[state.lastTaskId],
     closeToTray: state.settings.closeToTray,
     idleMin: state.settings.idleMin,
     trayHinted: state.settings.trayHinted,
     autoUpdate: state.settings.autoUpdate,
+    language: state.settings.language,
   });
 }
 
@@ -601,15 +623,15 @@ function renderSidebar() {
     </button>`;
 
   const projects = projectList();
-  const tags = Object.values(state.tags).sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+  const tags = Object.values(state.tags).sort((a, b) => a.title.localeCompare(b.title, i18n.lang()));
 
   $('#sidebar').innerHTML = `
-    ${nav('today', ICONS.sun, 'Сегодня', todayTasks().length)}
-    ${nav('inbox', ICONS.inbox, 'Без проекта', open((t) => !t.projectId))}
-    ${nav('upcoming', ICONS.calendar, 'Предстоящие', datedOpen((d) => d > dayStr()).length)}
-    ${nav('all', ICONS.list, 'Все задачи', open(() => true))}
+    ${nav('today', ICONS.sun, tr('Сегодня'), todayTasks().length)}
+    ${nav('inbox', ICONS.inbox, tr('Без проекта'), open((t) => !t.projectId))}
+    ${nav('upcoming', ICONS.calendar, tr('Предстоящие'), datedOpen((d) => d > dayStr()).length)}
+    ${nav('all', ICONS.list, tr('Все задачи'), open(() => true))}
 
-    <div class="nav-section"><span>Проекты</span><button data-action="new-project" title="Новый проект">${ICONS.plus}</button></div>
+    <div class="nav-section"><span>${tr('Проекты')}</span><button data-action="new-project" title="${tr('Новый проект')}">${ICONS.plus}</button></div>
     ${projects
       .map(
         (p) => `
@@ -621,7 +643,7 @@ function renderSidebar() {
       )
       .join('')}
 
-    <div class="nav-section"><span>Теги</span><button data-action="new-tag" title="Новый тег">${ICONS.plus}</button></div>
+    <div class="nav-section"><span>${tr('Теги')}</span><button data-action="new-tag" title="${tr('Новый тег')}">${ICONS.plus}</button></div>
     ${tags
       .map(
         (t) => `
@@ -634,8 +656,8 @@ function renderSidebar() {
       .join('')}
 
     <div class="spacer"></div>
-    ${nav('reports', ICONS.chart, 'Отчёты')}
-    ${nav('settings', ICONS.gear, 'Настройки')}
+    ${nav('reports', ICONS.chart, tr('Отчёты'))}
+    ${nav('settings', ICONS.gear, tr('Настройки'))}
   `;
 }
 
@@ -648,7 +670,7 @@ function renderTracker() {
   const cur = state.current && state.tasks[state.current.taskId];
   if (!cur) {
     const today = spentOnDay(dayStr());
-    el.innerHTML = `<span class="tracker-idle">${today ? `Сегодня отработано ${fmtDur(today)}` : 'Таймер не запущен'}</span>`;
+    el.innerHTML = `<span class="tracker-idle">${today ? tr('Сегодня отработано {time}', { time: fmtDur(today) }) : tr('Таймер не запущен')}</span>`;
     return;
   }
   const pill = el.querySelector('.tracker-pill');
@@ -659,9 +681,9 @@ function renderTracker() {
   el.innerHTML = `
     <div class="tracker-pill" data-id="${cur.id}">
       <span class="dot"></span>
-      <span class="t-title" data-open="${cur.id}">${esc(cur.title || 'Без названия')}</span>
+      <span class="t-title" data-open="${cur.id}">${esc(cur.title || tr('Без названия'))}</span>
       <span class="t-time">${fmtClock(totalTime(cur))}</span>
-      <button data-track="${cur.id}" title="Пауза">${ICONS.pause.replace('<svg', '<svg width="11" height="11"')}</button>
+      <button data-track="${cur.id}" title="${tr('Пауза')}">${ICONS.pause.replace('<svg', '<svg width="11" height="11"')}</button>
     </div>`;
 }
 
@@ -696,18 +718,18 @@ function listMeta() {
   const today = dayStr();
   if (v.type === 'today') {
     const d = new Date();
-    return { title: 'Сегодня', sub: `${WEEKDAYS_LONG[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`, ctx: { due: today } };
+    return { title: tr('Сегодня'), sub: `${dateWords().weekdaysLong[d.getDay()]}, ${dayMonth(d)}`, ctx: { due: today } };
   }
-  if (v.type === 'inbox') return { title: 'Без проекта', sub: 'Задачи, которые не относятся ни к одному проекту', ctx: {} };
-  if (v.type === 'upcoming') return { title: 'Предстоящие', sub: 'Задачи со сроком в будущем', ctx: { due: addDays(today, 1) } };
-  if (v.type === 'all') return { title: 'Все задачи', sub: 'Всё, что не сделано', ctx: {} };
+  if (v.type === 'inbox') return { title: tr('Без проекта'), sub: tr('Задачи, которые не относятся ни к одному проекту'), ctx: {} };
+  if (v.type === 'upcoming') return { title: tr('Предстоящие'), sub: tr('Задачи со сроком в будущем'), ctx: { due: addDays(today, 1) } };
+  if (v.type === 'all') return { title: tr('Все задачи'), sub: tr('Всё, что не сделано'), ctx: {} };
   if (v.type === 'project') {
     const p = state.projects[v.id];
-    return { title: p?.title, color: p?.color, sub: 'Проект', ctx: { projectId: v.id }, editable: 'project' };
+    return { title: p?.title, color: p?.color, sub: tr('Проект'), ctx: { projectId: v.id }, editable: 'project' };
   }
   if (v.type === 'tag') {
     const t = state.tags[v.id];
-    return { title: `#${t?.title}`, sub: 'Тег', ctx: { tagIds: [v.id] }, editable: 'tag' };
+    return { title: `#${t?.title}`, sub: tr('Тег'), ctx: { tagIds: [v.id] }, editable: 'tag' };
   }
   return { title: '', ctx: {} };
 }
@@ -723,11 +745,11 @@ function groupsForView() {
   if (v.type === 'today') {
     const overdue = datedOpen((d) => d < today).sort(byOrder);
     const td = datedOpen((d) => d === today).sort(byOrder);
-    if (overdue.length) groups.push({ key: 'overdue', title: 'Просрочено', tasks: overdue });
-    groups.push({ key: 'today', title: overdue.length ? 'На сегодня' : null, tasks: td });
+    if (overdue.length) groups.push({ key: 'overdue', title: tr('Просрочено'), tasks: overdue });
+    groups.push({ key: 'today', title: overdue.length ? tr('На сегодня') : null, tasks: td });
     const doneOnDay = (t) => t && t.done && t.doneAt && dayStr(t.doneAt) === today;
     const doneToday = Object.values(state.tasks).filter((t) => doneOnDay(t) && !(t.parentId && doneOnDay(state.tasks[t.parentId])));
-    if (doneToday.length) groups.push({ key: 'done', title: 'Выполнено сегодня', tasks: doneSorted(doneToday), collapsible: true });
+    if (doneToday.length) groups.push({ key: 'done', title: tr('Выполнено сегодня'), tasks: doneSorted(doneToday), collapsible: true });
   } else if (v.type === 'upcoming') {
     const future = datedOpen((d) => d > today).sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : a.order - b.order));
     const byDay = {};
@@ -736,12 +758,12 @@ function groupsForView() {
       .sort()
       .forEach((d) => {
         const dt = parseDay(d);
-        groups.push({ key: 'd' + d, title: `${relDate(d)} · ${WEEKDAYS[dt.getDay()]}`, tasks: byDay[d], due: d });
+        groups.push({ key: 'd' + d, title: `${relDate(d)} · ${dateWords().weekdays[dt.getDay()]}`, tasks: byDay[d], due: d });
       });
     if (!groups.length) groups.push({ key: 'empty', tasks: [] });
   } else if (v.type === 'all') {
     const noProj = open.filter((t) => !t.projectId).sort(byOrder);
-    if (noProj.length) groups.push({ key: 'inbox', title: 'Без проекта', tasks: noProj });
+    if (noProj.length) groups.push({ key: 'inbox', title: tr('Без проекта'), tasks: noProj });
     projectList().forEach((p) => {
       const list = open.filter((t) => t.projectId === p.id).sort(byOrder);
       if (list.length) groups.push({ key: 'p' + p.id, title: p.title, color: p.color, tasks: list });
@@ -752,7 +774,7 @@ function groupsForView() {
       v.type === 'inbox' ? (t) => !t.projectId : v.type === 'project' ? (t) => t.projectId === v.id : (t) => t.tagIds.includes(v.id);
     groups.push({ key: 'open', tasks: open.filter(match).sort(byOrder) });
     const done = all.filter((t) => t.done && match(t));
-    if (done.length) groups.push({ key: 'done', title: 'Выполнено', tasks: doneSorted(done), collapsible: true });
+    if (done.length) groups.push({ key: 'done', title: tr('Выполнено'), tasks: doneSorted(done), collapsible: true });
   }
   return groups;
 }
@@ -776,9 +798,9 @@ function renderListView() {
     const total = list.length + doneToday;
     stats = `
       <div class="head-stats">
-        <div class="stat"><div class="v" id="stat-today">${fmtDur(spentOnDay(today))}</div><div class="k">Отработано</div></div>
-        <div class="stat"><div class="v">${remaining ? fmtDur(remaining) : '–'}</div><div class="k">Осталось</div></div>
-        <div class="stat"><div class="v">${doneToday}/${total}</div><div class="k">Готово</div></div>
+        <div class="stat"><div class="v" id="stat-today">${fmtDur(spentOnDay(today))}</div><div class="k">${tr('Отработано')}</div></div>
+        <div class="stat"><div class="v">${remaining ? fmtDur(remaining) : '–'}</div><div class="k">${tr('Осталось')}</div></div>
+        <div class="stat"><div class="v">${doneToday}/${total}</div><div class="k">${tr('Готово')}</div></div>
       </div>`;
     progress = total ? `<div class="progress"><div style="width:${Math.round((doneToday / total) * 100)}%"></div></div>` : '';
   } else if (ui.view.type === 'project' || ui.view.type === 'tag') {
@@ -788,15 +810,15 @@ function renderListView() {
     const openN = list.filter((t) => !t.done).length;
     stats = `
       <div class="head-stats">
-        <div class="stat"><div class="v">${fmtDur(spent)}</div><div class="k">Всего времени</div></div>
-        <div class="stat"><div class="v">${openN}</div><div class="k">Открыто</div></div>
+        <div class="stat"><div class="v">${fmtDur(spent)}</div><div class="k">${tr('Всего времени')}</div></div>
+        <div class="stat"><div class="v">${openN}</div><div class="k">${tr('Открыто')}</div></div>
       </div>`;
   }
 
   const head = `
     <div class="page-head">
       <div>
-        <h1 class="page-title" ${meta.editable ? `data-action="edit-${meta.editable}" style="cursor:pointer" title="Изменить"` : ''}>
+        <h1 class="page-title" ${meta.editable ? `data-action="edit-${meta.editable}" style="cursor:pointer" title="${tr('Изменить')}"` : ''}>
           ${meta.color ? `<span class="swatch" style="background:${meta.color}"></span>` : ''}${esc(meta.title)}
         </h1>
         <div class="page-sub">${esc(meta.sub || '')}</div>
@@ -806,8 +828,8 @@ function renderListView() {
     ${progress}
     <div class="addbar">
       <span class="plus">+</span>
-      <input id="addbar-input" placeholder="Новая задача…" autocomplete="off" spellcheck="false" />
-      <span class="hint">#тег &nbsp;+проект &nbsp;~30м &nbsp;@завтра</span>
+      <input id="addbar-input" placeholder="${tr('Новая задача…')}" autocomplete="off" spellcheck="false" />
+      <span class="hint">${tr('#тег &nbsp;+проект &nbsp;~30м &nbsp;@завтра')}</span>
     </div>`;
 
   const body = groups
@@ -833,10 +855,10 @@ function renderListView() {
 function emptyState() {
   const v = ui.view.type;
   const msg = {
-    today: ['☀️', 'На сегодня всё чисто', 'Добавьте задачу или перетащите её сюда из списка'],
-    upcoming: ['🗓️', 'Ничего не запланировано', 'Укажите срок у задачи – она появится здесь'],
-    inbox: ['📥', 'Здесь пусто', 'Сюда попадают задачи, которым не выбран проект'],
-  }[v] || ['✨', 'Здесь пока пусто', 'Начните с первой задачи'];
+    today: ['☀️', tr('На сегодня всё чисто'), tr('Добавьте задачу или перетащите её сюда из списка')],
+    upcoming: ['🗓️', tr('Ничего не запланировано'), tr('Укажите срок у задачи – она появится здесь')],
+    inbox: ['📥', tr('Здесь пусто'), tr('Сюда попадают задачи, которым не выбран проект')],
+  }[v] || ['✨', tr('Здесь пока пусто'), tr('Начните с первой задачи')];
   return `<div class="empty"><div class="big">${msg[0]}</div><div class="t">${msg[1]}</div><div>${msg[2]}</div></div>`;
 }
 
@@ -882,14 +904,14 @@ function taskRow(t, isSub = false) {
 
   const row = `
     <div class="task ${t.done ? 'done' : ''} ${tracking ? 'tracking' : ''} ${ui.selected === t.id ? 'selected' : ''} ${isSub ? 'sub' : ''}"
-         data-task="${t.id}" ${isSub ? '' : 'draggable="true"'}>
-      <button class="check" data-done="${t.id}" title="Готово">${ICONS.check}</button>
+         data-task="${t.id}" ${isSub ? `data-sub="${t.id}"` : ''} draggable="true">
+      <button class="check" data-done="${t.id}" title="${tr('Готово')}">${ICONS.check}</button>
       <div class="body">
-        <div class="title">${esc(t.title || 'Без названия')}</div>
+        <div class="title">${esc(t.title || tr('Без названия'))}</div>
         <div class="meta">${meta.join('')}</div>
       </div>
       ${time}
-      <button class="play" data-track="${t.id}" title="${tracking ? 'Пауза' : 'Засечь время'}">${tracking ? ICONS.pause : ICONS.play}</button>
+      <button class="play" data-track="${t.id}" title="${tracking ? tr('Пауза') : tr('Засечь время')}">${tracking ? ICONS.pause : ICONS.play}</button>
     </div>`;
 
   if (isSub || !t.subIds.length || !t.expanded) return row;
@@ -912,7 +934,7 @@ function renderDetail() {
   panel.classList.add('open');
   const tracking = state.current?.taskId === t.id;
   const parent = t.parentId && state.tasks[t.parentId];
-  const projectOpts = [`<option value="">Без проекта</option>`]
+  const projectOpts = [`<option value="">${tr('Без проекта')}</option>`]
     .concat(
       projectList().map((p) => `<option value="${p.id}" ${t.projectId === p.id ? 'selected' : ''}>${esc(p.title)}</option>`)
     )
@@ -926,10 +948,10 @@ function renderDetail() {
   panel.innerHTML = `
     <div class="detail-inner">
       <div class="detail-top">
-        <div class="crumbs">${parent ? `<span data-open="${parent.id}" style="cursor:pointer">↖ ${esc(parent.title)}</span>` : t.done ? '✓ Выполнено' : ''}</div>
+        <div class="crumbs">${parent ? `<span data-open="${parent.id}" style="cursor:pointer">↖ ${esc(parent.title)}</span>` : t.done ? `✓ ${tr('Выполнено')}` : ''}</div>
         <div style="display:flex;gap:2px">
-          <button class="icon-btn danger" data-action="delete-task" title="Удалить (Del)">${ICONS.trash}</button>
-          <button class="icon-btn" data-action="close-detail" title="Закрыть (Esc)">${ICONS.close}</button>
+          <button class="icon-btn danger" data-action="delete-task" title="${tr('Удалить (Del)')}">${ICONS.trash}</button>
+          <button class="icon-btn" data-action="close-detail" title="${tr('Закрыть (Esc)')}">${ICONS.close}</button>
         </div>
       </div>
 
@@ -946,49 +968,49 @@ function renderDetail() {
       ${
         parent
           ? ''
-          : `<div class="field"><label>Проект</label><select class="field-input" id="d-project">${projectOpts}</select></div>`
+          : `<div class="field"><label>${tr('Проект')}</label><select class="field-input" id="d-project">${projectOpts}</select></div>`
       }
-      <div class="field"><label>Срок</label>
+      <div class="field"><label>${tr('Срок')}</label>
         <div style="display:flex;gap:6px;align-items:center">
           <input type="date" class="field-input" id="d-due" value="${t.due || ''}" />
-          ${t.due !== dayStr() ? `<button class="btn" style="padding:4px 10px" data-action="due-today">Сегодня</button>` : ''}
+          ${t.due !== dayStr() ? `<button class="btn" style="padding:4px 10px" data-action="due-today">${tr('Сегодня')}</button>` : ''}
         </div>
       </div>
-      <div class="field"><label>Оценка</label>
-        ${durField(t.estimate, 'id="d-estimate" title="Сколько времени, по-вашему, займёт задача"')}
+      <div class="field"><label>${tr('Оценка')}</label>
+        ${durField(t.estimate, `id="d-estimate" title="${tr('Сколько времени, по-вашему, займёт задача')}"`)}
       </div>
       ${
         parent
           ? ''
-          : `<div class="field"><label>Теги</label>
+          : `<div class="field"><label>${tr('Теги')}</label>
         <div class="tag-editor">
           ${t.tagIds
             .map((id) => state.tags[id])
             .filter(Boolean)
-            .map((tag) => `<span class="chip" data-untag="${tag.id}" title="Убрать" style="color:${tag.color}">#${esc(tag.title)}</span>`)
+            .map((tag) => `<span class="chip" data-untag="${tag.id}" title="${tr('Убрать')}" style="color:${tag.color}">#${esc(tag.title)}</span>`)
             .join('')}
-          <button class="add-tag" data-action="tag-picker">+ тег</button>
+          <button class="add-tag" data-action="tag-picker">${tr('+ тег')}</button>
         </div>
       </div>`
       }
 
       <div class="d-section">
-        <h4>Заметки</h4>
-        <textarea class="d-notes" id="d-notes" placeholder="Детали, ссылки, мысли…">${esc(t.notes)}</textarea>
+        <h4>${tr('Заметки')}</h4>
+        <textarea class="d-notes" id="d-notes" placeholder="${tr('Детали, ссылки, мысли…')}">${esc(t.notes)}</textarea>
       </div>
 
       ${
         parent
           ? ''
           : `<div class="d-section">
-        <h4>Подзадачи ${t.subIds.length ? `· ${t.subIds.filter((s) => state.tasks[s]?.done).length}/${t.subIds.length}` : ''}</h4>
+        <h4>${tr('Подзадачи')} ${t.subIds.length ? `· ${t.subIds.filter((s) => state.tasks[s]?.done).length}/${t.subIds.length}` : ''}</h4>
         <div class="subs">
           ${t.subIds
             .map((s) => state.tasks[s])
             .filter(Boolean)
             .map(
               (s) => `
-            <div class="sub-row ${s.done ? 'done' : ''}">
+            <div class="sub-row ${s.done ? 'done' : ''}" data-sub="${s.id}" draggable="true" title="${tr('Перетащите, чтобы изменить порядок')}">
               <button class="check" data-done="${s.id}">${ICONS.check}</button>
               <span data-open="${s.id}">${esc(s.title)}</span>
               <small style="color:var(--text-3)">${ownTime(s) ? fmtDur(ownTime(s)) : ''}</small>
@@ -996,13 +1018,13 @@ function renderDetail() {
             </div>`
             )
             .join('')}
-          <input class="sub-add" id="d-subadd" placeholder="+ Добавить подзадачу" />
+          <input class="sub-add" id="d-subadd" placeholder="${tr('+ Добавить подзадачу')}" />
         </div>
       </div>`
       }
 
       <div class="d-section">
-        <h4>Журнал времени</h4>
+        <h4>${tr('Журнал времени')}</h4>
         <div class="log">
           ${
             days.length
@@ -1010,19 +1032,19 @@ function renderDetail() {
                   .map(
                     (d) => `
             <div class="log-row"><span class="d">${relDate(d)}</span>
-              ${durField(t.timeByDay[d], `data-logday="${d}" title="Можно исправить вручную"`)}</div>`
+              ${durField(t.timeByDay[d], `data-logday="${d}" title="${tr('Можно исправить вручную')}"`)}</div>`
                   )
                   .join('')
-              : '<div style="color:var(--text-3);font-size:13px">Время ещё не учитывалось</div>'
+              : `<div style="color:var(--text-3);font-size:13px">${tr('Время ещё не учитывалось')}</div>`
           }
           <div class="log-row" style="border:0;padding-top:10px">
-            <button class="btn" style="padding:4px 10px;font-size:12.5px" data-action="add-time">+ Добавить время вручную</button>
+            <button class="btn" style="padding:4px 10px;font-size:12.5px" data-action="add-time">${tr('+ Добавить время вручную')}</button>
           </div>
         </div>
       </div>
 
-      <div style="margin-top:26px;font-size:12px;color:var(--text-3)">Создано ${fmtDate(dayStr(t.created))}${
-        t.doneAt ? ` · выполнено ${fmtDate(dayStr(t.doneAt))}` : ''
+      <div style="margin-top:26px;font-size:12px;color:var(--text-3)">${tr('Создано {date}', { date: fmtDate(dayStr(t.created)) })}${
+        t.doneAt ? ` · ${tr('выполнено {date}', { date: fmtDate(dayStr(t.doneAt)) })}` : ''
       }</div>
     </div>`;
 
@@ -1031,7 +1053,7 @@ function renderDetail() {
 
 function timerLine(t) {
   const est = totalEstimate(t);
-  return `сегодня <span id="d-today">${fmtDur(timeOnDay(t, dayStr()))}</span>${est ? ` · оценка ${fmtDur(est)}` : ''}`;
+  return `${tr('сегодня')} <span id="d-today">${fmtDur(timeOnDay(t, dayStr()))}</span>${est ? ` · ${tr('оценка {time}', { time: fmtDur(est) })}` : ''}`;
 }
 
 function autoGrow(el) {
@@ -1083,27 +1105,27 @@ function renderReports() {
 
   return `
     <div class="page-head">
-      <div><h1 class="page-title">Отчёты</h1><div class="page-sub">Куда уходит время</div></div>
+      <div><h1 class="page-title">${tr('Отчёты')}</h1><div class="page-sub">${tr('Куда уходит время')}</div></div>
       <div class="seg">
-        <button class="${range === 1 ? 'on' : ''}" data-range="1">Сегодня</button>
-        <button class="${range === 7 ? 'on' : ''}" data-range="7">7 дней</button>
-        <button class="${range === 30 ? 'on' : ''}" data-range="30">30 дней</button>
+        <button class="${range === 1 ? 'on' : ''}" data-range="1">${tr('Сегодня')}</button>
+        <button class="${range === 7 ? 'on' : ''}" data-range="7">${tr('7 дней')}</button>
+        <button class="${range === 30 ? 'on' : ''}" data-range="30">${tr('30 дней')}</button>
       </div>
     </div>
 
     <div class="cards">
-      <div class="card"><div class="k">Сегодня</div><div class="v">${fmtDur(spentOnDay(today))}</div><div class="s">отработано</div></div>
+      <div class="card"><div class="k">${tr('Сегодня')}</div><div class="v">${fmtDur(spentOnDay(today))}</div><div class="s">${tr('отработано')}</div></div>
       ${
         single
-          ? `<div class="card"><div class="k">В работе</div><div class="v">${Object.keys(perTask).length}</div><div class="s">задач с учтённым временем</div></div>`
-          : `<div class="card"><div class="k">За ${range} дней</div><div class="v">${fmtDur(total)}</div>
-        <div class="s">в среднем ${fmtDur(activeDays ? total / activeDays : 0)} в рабочий день</div></div>`
+          ? `<div class="card"><div class="k">${tr('В работе')}</div><div class="v">${Object.keys(perTask).length}</div><div class="s">${tr('задач с учтённым временем')}</div></div>`
+          : `<div class="card"><div class="k">${tr('За {n} дней', { n: range })}</div><div class="v">${fmtDur(total)}</div>
+        <div class="s">${tr('в среднем {time} в рабочий день', { time: fmtDur(activeDays ? total / activeDays : 0) })}</div></div>`
       }
-      <div class="card"><div class="k">Выполнено</div><div class="v">${completed}</div><div class="s">${single ? 'задач сегодня' : 'задач за период'}</div></div>
+      <div class="card"><div class="k">${tr('Выполнено')}</div><div class="v">${completed}</div><div class="s">${single ? tr('задач сегодня') : tr('задач за период')}</div></div>
     </div>
 
     ${single ? '' : `<div class="card">
-      <h3>По дням</h3>
+      <h3>${tr('По дням')}</h3>
       <div class="bars" style="gap:${range > 14 ? 4 : 10}px">
         ${perDay
           .map((x, i) => {
@@ -1112,7 +1134,7 @@ function renderReports() {
             return `<div class="bar-col" title="${relDate(x.d)}: ${fmtDur(x.v)}">
               <div class="bv">${range <= 14 && x.v ? fmtDur(x.v) : ''}</div>
               <div class="bar ${isToday ? 'today' : ''} ${x.v ? '' : 'zero'}" style="height:${(x.v / max) * 120}px"></div>
-              <div class="bl ${isToday ? 'today' : ''}">${showLabel(i) ? (range <= 14 ? WEEKDAYS[dt.getDay()] : dt.getDate()) : '&nbsp;'}</div>
+              <div class="bl ${isToday ? 'today' : ''}">${showLabel(i) ? (range <= 14 ? dateWords().weekdays[dt.getDay()] : dt.getDate()) : '&nbsp;'}</div>
             </div>`;
           })
           .join('')}
@@ -1120,24 +1142,24 @@ function renderReports() {
     </div>`}
 
     <div class="card">
-      <h3>По проектам</h3>
+      <h3>${tr('По проектам')}</h3>
       ${
         projRows.length
           ? `<div class="rows">${projRows
               .map(([pid, v]) => {
                 const p = state.projects[pid];
                 const color = p?.color || 'var(--text-3)';
-                return `<div class="rrow"><div class="n"><span class="swatch" style="background:${color}"></span>${esc(p?.title || 'Без проекта')}</div>
+                return `<div class="rrow"><div class="n"><span class="swatch" style="background:${color}"></span>${esc(p?.title || tr('Без проекта'))}</div>
                   <div class="track"><div style="width:${(v / projMax) * 100}%;background:${color}"></div></div>
                   <div class="v">${fmtDur(v)}</div></div>`;
               })
               .join('')}</div>`
-          : `<div style="color:var(--text-3)">${single ? 'Сегодня время ещё не учитывалось' : 'За этот период время не учитывалось'}</div>`
+          : `<div style="color:var(--text-3)">${single ? tr('Сегодня время ещё не учитывалось') : tr('За этот период время не учитывалось')}</div>`
       }
     </div>
 
     <div class="card">
-      <h3>${single ? 'Задачи за сегодня' : 'Задачи, на которые ушло больше всего времени'}</h3>
+      <h3>${single ? tr('Задачи за сегодня') : tr('Задачи, на которые ушло больше всего времени')}</h3>
       ${
         taskRows.length
           ? `<div class="rows">${taskRows
@@ -1149,7 +1171,7 @@ function renderReports() {
                   <div class="v">${fmtDur(v)}</div></div>`;
               })
               .join('')}</div>`
-          : '<div style="color:var(--text-3)">Пока нет данных</div>'
+          : `<div style="color:var(--text-3)">${tr('Пока нет данных')}</div>`
       }
     </div>`;
 }
@@ -1160,39 +1182,47 @@ function renderReports() {
 
 function renderSettings() {
   const th = state.settings.theme;
-  const n = Object.keys(state.tasks).length;
+  const lang = state.settings.language;
   return `
-    <div class="page-head"><div><h1 class="page-title">Настройки</h1><div class="page-sub">${n} задач · ${
-      Object.keys(state.projects).length
-    } проектов · ${Object.keys(state.tags).length} тегов</div></div></div>
+    <div class="page-head"><div><h1 class="page-title">${tr('Настройки')}</h1><div class="page-sub">${trn(Object.keys(state.tasks).length, 'task')} · ${trn(
+      Object.keys(state.projects).length,
+      'project'
+    )} · ${trn(Object.keys(state.tags).length, 'tag')}</div></div></div>
 
     <div class="card">
-      <h3>Внешний вид</h3>
+      <h3>${tr('Внешний вид')}</h3>
       <div class="set-row">
-        <div><div class="t">Тема</div><div class="d">Светлая, тёмная или как в Windows</div></div>
+        <div><div class="t">${tr('Язык')}</div><div class="d">${tr('Язык интерфейса')}</div></div>
         <div class="seg">
-          <button class="${th === 'system' ? 'on' : ''}" data-theme-set="system">Системная</button>
-          <button class="${th === 'light' ? 'on' : ''}" data-theme-set="light">Светлая</button>
-          <button class="${th === 'dark' ? 'on' : ''}" data-theme-set="dark">Тёмная</button>
+          <button class="${lang === 'ru' ? 'on' : ''}" data-lang-set="ru">Русский</button>
+          <button class="${lang === 'en' ? 'on' : ''}" data-lang-set="en">English</button>
+        </div>
+      </div>
+      <div class="set-row">
+        <div><div class="t">${tr('Тема')}</div><div class="d">${tr('Светлая, тёмная или как в Windows')}</div></div>
+        <div class="seg">
+          <button class="${th === 'system' ? 'on' : ''}" data-theme-set="system">${tr('Системная')}</button>
+          <button class="${th === 'light' ? 'on' : ''}" data-theme-set="light">${tr('Светлая')}</button>
+          <button class="${th === 'dark' ? 'on' : ''}" data-theme-set="dark">${tr('Тёмная')}</button>
         </div>
       </div>
     </div>
 
     <div class="card">
-      <h3>Работа в фоне</h3>
+      <h3>${tr('Работа в фоне')}</h3>
       ${autostart === null ? '' : `<div class="set-row">
-        <div><div class="t">Запускать вместе с Windows</div><div class="d">Quill Track стартует при входе в систему и сразу сворачивается в трей</div></div>
-        <button class="switch ${autostart ? 'on' : ''}" data-action="toggle-autostart" role="switch" aria-checked="${autostart}" title="${autostart ? 'Включено' : 'Выключено'}"><span></span></button>
+        <div><div class="t">${tr('Запускать вместе с Windows')}</div><div class="d">${tr('Quill Track стартует при входе в систему и сразу сворачивается в трей')}</div></div>
+        <button class="switch ${autostart ? 'on' : ''}" data-action="toggle-autostart" role="switch" aria-checked="${autostart}" title="${autostart ? tr('Включено') : tr('Выключено')}"><span></span></button>
       </div>`}
       <div class="set-row">
-        <div><div class="t">Сворачивать в трей при закрытии</div><div class="d">Крестик прячет окно к часам, таймер продолжает идти. Выйти – через значок в трее → «Выход»</div></div>
-        <button class="switch ${state.settings.closeToTray ? 'on' : ''}" data-action="toggle-tray" role="switch" aria-checked="${state.settings.closeToTray}" title="${state.settings.closeToTray ? 'Включено' : 'Выключено'}"><span></span></button>
+        <div><div class="t">${tr('Сворачивать в трей при закрытии')}</div><div class="d">${tr('Крестик прячет окно к часам, таймер продолжает идти. Выйти – через значок в трее → «Выход»')}</div></div>
+        <button class="switch ${state.settings.closeToTray ? 'on' : ''}" data-action="toggle-tray" role="switch" aria-checked="${state.settings.closeToTray}" title="${state.settings.closeToTray ? tr('Включено') : tr('Выключено')}"><span></span></button>
       </div>
       <div class="set-row">
-        <div><div class="t">Спрашивать о времени простоя</div><div class="d">Если таймер идёт, а мышь и клавиатура не трогались дольше этого времени, Quill Track спросит, куда записать отсутствие</div></div>
+        <div><div class="t">${tr('Спрашивать о времени простоя')}</div><div class="d">${tr('Если таймер идёт, а мышь и клавиатура не трогались дольше этого времени, Quill Track спросит, куда записать отсутствие')}</div></div>
         <div class="seg">
           ${[0, 3, 5, 10, 15, 30]
-            .map((m) => `<button class="${state.settings.idleMin === m ? 'on' : ''}" data-idle-set="${m}">${m ? `${m} мин` : 'Выкл'}</button>`)
+            .map((m) => `<button class="${state.settings.idleMin === m ? 'on' : ''}" data-idle-set="${m}">${m ? `${m} ${tr('мин')}` : tr('Выкл')}</button>`)
             .join('')}
         </div>
       </div>
@@ -1202,31 +1232,29 @@ function renderSettings() {
 
     ${renderFolderSync()}
 
-    ${renderInbox()}
-
     <div class="card">
-      <h3>Данные</h3>
+      <h3>${tr('Данные')}</h3>
       <div class="set-row">
-        <div><div class="t">Резервная копия</div><div class="d">Сохранить все данные в файл. Автокопия также делается раз в день.</div></div>
-        <button class="btn" data-action="export">Экспорт…</button>
+        <div><div class="t">${tr('Резервная копия')}</div><div class="d">${tr('Сохранить все данные в файл. Автокопия также делается раз в день.')}</div></div>
+        <button class="btn" data-action="export">${tr('Экспорт…')}</button>
       </div>
       <div class="set-row">
-        <div><div class="t">Восстановить из резервной копии</div><div class="d">Заменит текущие данные содержимым файла</div></div>
-        <button class="btn" data-action="import-flow">Восстановить…</button>
+        <div><div class="t">${tr('Восстановить из резервной копии')}</div><div class="d">${tr('Заменит текущие данные содержимым файла')}</div></div>
+        <button class="btn" data-action="import-flow">${tr('Восстановить…')}</button>
       </div>
       <div class="set-row">
-        <div><div class="t">Очистить выполненные</div><div class="d">Удалить все выполненные задачи старше 30 дней (учтённое время пропадёт из отчётов)</div></div>
-        <button class="btn danger" data-action="purge-done">Очистить</button>
+        <div><div class="t">${tr('Очистить выполненные')}</div><div class="d">${tr('Удалить все выполненные задачи старше 30 дней (учтённое время пропадёт из отчётов)')}</div></div>
+        <button class="btn danger" data-action="purge-done">${tr('Очистить')}</button>
       </div>
     </div>
 
     <div class="card">
-      <h3>Горячие клавиши</h3>
+      <h3>${tr('Горячие клавиши')}</h3>
       <div class="rows" style="font-size:13px;color:var(--text-2)">
-        <div><kbd>N</kbd> новая задача &nbsp; <kbd>Esc</kbd> закрыть панель</div>
-        <div><kbd>↑</kbd> <kbd>↓</kbd> выбор задачи &nbsp; <kbd>Enter</kbd> открыть</div>
-        <div><kbd>Пробел</kbd> старт/пауза таймера &nbsp; <kbd>D</kbd> выполнено &nbsp; <kbd>Del</kbd> удалить</div>
-        <div><kbd>T</kbd> на сегодня &nbsp; <kbd>1</kbd>–<kbd>4</kbd> разделы</div>
+        <div><kbd>N</kbd> ${tr('новая задача')} &nbsp; <kbd>Esc</kbd> ${tr('закрыть панель')}</div>
+        <div><kbd>↑</kbd> <kbd>↓</kbd> ${tr('выбор задачи')} &nbsp; <kbd>Enter</kbd> ${tr('открыть')}</div>
+        <div><kbd>${tr('Пробел')}</kbd> ${tr('старт/пауза таймера')} &nbsp; <kbd>D</kbd> ${tr('выполнено')} &nbsp; <kbd>Del</kbd> ${tr('удалить')}</div>
+        <div><kbd>T</kbd> ${tr('на сегодня')} &nbsp; <kbd>1</kbd>–<kbd>4</kbd> ${tr('разделы')}</div>
       </div>
     </div>`;
 }
@@ -1236,82 +1264,37 @@ function renderFolderSync() {
   const picked = new Set(syncProjectIds());
   const projects = projectList();
   const statusText = sync.error
-    ? `Не удалось выгрузить: ${esc(sync.error)}`
+    ? tr('Не удалось выгрузить: {error}', { error: esc(sync.error) })
     : sync.at
-      ? `Выгружено в ${fmtTimeOfDay(sync.at)}`
-      : 'Файл обновляется через минуту после изменений и при выходе';
+      ? tr('Выгружено в {time}', { time: fmtTimeOfDay(sync.at) })
+      : tr('Файл обновляется через минуту после изменений и при выходе');
   return `
     <div class="card">
-      <h3>Выгрузка в папку</h3>
+      <h3>${tr('Выгрузка в папку')}</h3>
       <div class="set-row">
-        <div><div class="t">Сохранять данные в папку</div><div class="d">Задачи и учтённое время записываются в файл ${esc('quill-track-sync.json')} в выбранной папке, например в папке Google Диска или Dropbox</div></div>
-        <button class="switch ${s.on ? 'on' : ''}" data-action="toggle-sync" role="switch" aria-checked="${s.on}" title="${s.on ? 'Включено' : 'Выключено'}"><span></span></button>
+        <div><div class="t">${tr('Сохранять данные в папку')}</div><div class="d">${tr('Задачи и учтённое время записываются в файл {file} в выбранной папке', { file: 'quill-track-sync.json' })}</div></div>
+        <button class="switch ${s.on ? 'on' : ''}" data-action="toggle-sync" role="switch" aria-checked="${s.on}" title="${s.on ? tr('Включено') : tr('Выключено')}"><span></span></button>
       </div>
       ${
         s.on
           ? `
       <div class="set-row">
-        <div><div class="t">Папка</div><div class="d">${esc(s.dir) || 'Не выбрана'}</div></div>
-        <button class="btn" data-action="sync-pick">Изменить…</button>
+        <div><div class="t">${tr('Папка')}</div><div class="d">${esc(s.dir) || tr('Не выбрана')}</div></div>
+        <button class="btn" data-action="sync-pick">${tr('Изменить…')}</button>
       </div>
       <div class="set-row">
-        <div><div class="t">Проекты</div><div class="d">Только эти проекты попадут в файл</div></div>
+        <div><div class="t">${tr('Проекты')}</div><div class="d">${tr('Только эти проекты попадут в файл')}</div></div>
         <div class="seg wrap">
           ${projects.map((p) => `<button class="${picked.has(p.id) ? 'on' : ''}" data-sync-project="${p.id}">${esc(p.title)}</button>`).join('')}
         </div>
       </div>
       <div class="set-row">
-        <div><div class="t">Последняя выгрузка</div><div class="d">${statusText}</div></div>
-        <button class="btn" data-action="sync-now">Выгрузить сейчас</button>
+        <div><div class="t">${tr('Последняя выгрузка')}</div><div class="d">${statusText}</div></div>
+        <button class="btn" data-action="sync-now">${tr('Выгрузить сейчас')}</button>
       </div>`
           : ''
       }
     </div>`;
-}
-
-function renderInbox() {
-  const s = state.settings.inbox;
-  const statusText = inboxStatus.error
-    ? `Не удалось проверить папку: ${esc(inboxStatus.error)}`
-    : inboxStatus.last
-      ? `Последнее: ${esc(inboxStatus.last.length > 160 ? inboxStatus.last.slice(0, 159) + '…' : inboxStatus.last)}`
-      : inboxStatus.at
-        ? `Проверено в ${fmtTimeOfDay(inboxStatus.at)}, новых файлов нет`
-        : 'Папка проверяется раз в минуту';
-  return `
-    <div class="card">
-      <h3>Приём изменений из папки</h3>
-      <div class="set-row">
-        <div><div class="t">Принимать изменения из папки</div><div class="d">Другие программы и помощники кладут в папку JSON-файлы: добавить задачу, переименовать, отметить выполненной. Quill Track применяет их и удаляет файл. Формат описан в README</div></div>
-        <button class="switch ${s.on ? 'on' : ''}" data-action="toggle-inbox" role="switch" aria-checked="${s.on}" title="${s.on ? 'Включено' : 'Выключено'}"><span></span></button>
-      </div>
-      ${
-        s.on
-          ? `
-      <div class="set-row">
-        <div><div class="t">Папка</div><div class="d">${esc(s.dir) || 'Не выбрана'}</div></div>
-        <button class="btn" data-action="inbox-pick">Изменить…</button>
-      </div>
-      <div class="set-row">
-        <div><div class="t">Состояние</div><div class="d">${statusText}</div></div>
-        <button class="btn" data-action="inbox-now">Проверить сейчас</button>
-      </div>`
-          : ''
-      }
-    </div>`;
-}
-
-async function toggleInbox() {
-  const s = state.settings.inbox;
-  if (!s.on && !s.dir) {
-    s.dir = await window.flow.pickSyncDir('Папка для входящих изменений');
-    if (!s.dir) return;
-  }
-  s.on = !s.on;
-  inboxStatus.error = '';
-  save();
-  if (s.on) await checkInbox();
-  renderMain();
 }
 
 async function toggleFolderSync() {
@@ -1334,29 +1317,38 @@ let autostart = null;
 
 function renderUpdates() {
   if (!update) return '';
-  const v = update.version;
+  const version = update.version;
+  const failure = update.error || {};
+  const errorText =
+    failure.kind === 'download'
+      ? tr('Не удалось скачать обновление')
+      : failure.code
+        ? tr('GitHub ответил ошибкой {code}. Попробуйте позже', { code: failure.code })
+        : failure.kind === 'network'
+          ? tr('Нет связи с GitHub. Проверьте интернет')
+          : tr('Не удалось проверить обновления');
   const [text, button] = {
-    dev: ['Обновления проверяются только в собранной версии', ''],
-    idle: ['', `<button class="btn" data-action="update-check">Проверить</button>`],
-    checking: ['Проверяю…', ''],
-    none: ['Установлена последняя версия', `<button class="btn" data-action="update-check">Проверить</button>`],
-    downloading: [`Загружаю версию ${v}… ${update.percent}%`, ''],
-    ready: [`Версия ${v} загружена и установится при перезапуске`, `<button class="btn primary" data-action="update-install">Перезапустить</button>`],
-    available: [`Вышла версия ${v}. Переносную версию нужно скачать заново`, `<button class="btn primary" data-action="update-open">Скачать</button>`],
-    error: ['Не удалось проверить обновления. Нет связи с GitHub?', `<button class="btn" data-action="update-check">Повторить</button>`],
+    dev: [tr('Обновления проверяются только в собранной версии'), ''],
+    idle: ['', `<button class="btn" data-action="update-check">${tr('Проверить')}</button>`],
+    checking: [tr('Проверяю…'), ''],
+    none: [tr('Установлена последняя версия'), `<button class="btn" data-action="update-check">${tr('Проверить')}</button>`],
+    downloading: [tr('Загружаю версию {version}… {percent}%', { version, percent: update.percent }), ''],
+    ready: [tr('Версия {version} загружена и установится при перезапуске', { version }), `<button class="btn primary" data-action="update-install">${tr('Перезапустить')}</button>`],
+    available: [tr('Вышла версия {version}. Переносную версию нужно скачать заново', { version }), `<button class="btn primary" data-action="update-open">${tr('Скачать')}</button>`],
+    error: [errorText, `<button class="btn" data-action="update-check">${tr('Повторить')}</button>`],
   }[update.state];
   return `
     <div class="card">
-      <h3>Обновления</h3>
+      <h3>${tr('Обновления')}</h3>
       <div class="set-row">
-        <div><div class="t">Quill Track ${esc(update.current)}</div><div class="d">${esc(text) || 'Новые версии выходят на GitHub'}</div></div>
+        <div><div class="t">Quill Track ${esc(update.current)}</div><div class="d">${esc(text) || tr('Новые версии выходят на GitHub')}</div></div>
         ${button}
       </div>
       <div class="set-row">
-        <div><div class="t">Проверять обновления автоматически</div><div class="d">${
-          update.portable ? 'При запуске и раз в 6 часов. Если вышла новая версия, Quill Track скажет об этом' : 'При запуске и раз в 6 часов. Новая версия скачивается в фоне и ставится при следующем запуске'
+        <div><div class="t">${tr('Проверять обновления автоматически')}</div><div class="d">${
+          update.portable ? tr('При запуске и раз в 6 часов. Если вышла новая версия, Quill Track скажет об этом') : tr('При запуске и раз в 6 часов. Новая версия скачивается в фоне и ставится при следующем запуске')
         }</div></div>
-        <button class="switch ${state.settings.autoUpdate ? 'on' : ''}" data-action="toggle-update" role="switch" aria-checked="${state.settings.autoUpdate}" title="${state.settings.autoUpdate ? 'Включено' : 'Выключено'}"><span></span></button>
+        <button class="switch ${state.settings.autoUpdate ? 'on' : ''}" data-action="toggle-update" role="switch" aria-checked="${state.settings.autoUpdate}" title="${state.settings.autoUpdate ? tr('Включено') : tr('Выключено')}"><span></span></button>
       </div>
     </div>`;
 }
@@ -1365,10 +1357,45 @@ function updateChanged(u) {
   const was = update && update.state;
   update = u;
   if (u.state !== was) {
-    if (u.state === 'ready') toast(`Обновление ${u.version} готово`, { label: 'Перезапустить', run: () => window.flow.installUpdate() });
-    if (u.state === 'available') toast(`Вышла версия ${u.version}`, { label: 'Скачать', run: () => window.flow.openRelease() });
+    if (u.state === 'ready') toast(tr('Обновление {version} готово', { version: u.version }), { label: tr('Перезапустить'), run: () => window.flow.installUpdate() });
+    if (u.state === 'available') toast(tr('Вышла версия {version}', { version: u.version }), { label: tr('Скачать'), run: () => window.flow.openRelease() });
   }
   if (ui.view.type === 'settings') renderMain();
+}
+
+function setLanguage(lang) {
+  state.settings.language = lang;
+  i18n.setLang(lang);
+  document.documentElement.lang = lang;
+  save();
+  sendStatus();
+  renderAll();
+}
+
+/** First start: nothing is saved until the user picks a language, so there is no way to skip this. */
+function pickLanguage() {
+  const suggested = i18n.fromLocale(navigator.language);
+  const modal = $('#modal');
+  modal.hidden = false;
+  modal.innerHTML = `
+    <div class="modal lang-modal">
+      <h3>Выберите язык · Choose your language</h3>
+      <div class="lang-opts">
+        <button class="btn ${suggested === 'ru' ? 'primary' : ''}" data-pick-lang="ru">Русский</button>
+        <button class="btn ${suggested === 'en' ? 'primary' : ''}" data-pick-lang="en">English</button>
+      </div>
+    </div>`;
+  $(`[data-pick-lang="${suggested}"]`, modal).focus();
+  return new Promise((resolve) => {
+    modal.onclick = (e) => {
+      const b = e.target.closest('[data-pick-lang]');
+      if (!b) return;
+      modal.hidden = true;
+      modal.innerHTML = '';
+      modal.onclick = null;
+      resolve(b.dataset.pickLang);
+    };
+  });
 }
 
 function renderAll() {
@@ -1446,7 +1473,7 @@ function openTagPicker(anchor, task) {
   popoverEl.className = 'popover';
   popoverEl.style.left = Math.min(r.left, window.innerWidth - 240) + 'px';
   popoverEl.style.top = r.bottom + 6 + 'px';
-  popoverEl.innerHTML = `<input placeholder="Найти или создать тег…" /><div class="opts"></div>`;
+  popoverEl.innerHTML = `<input placeholder="${tr('Найти или создать тег…')}" /><div class="opts"></div>`;
   document.body.appendChild(popoverEl);
   const input = popoverEl.querySelector('input');
   const opts = popoverEl.querySelector('.opts');
@@ -1455,7 +1482,7 @@ function openTagPicker(anchor, task) {
     const q = input.value.trim().toLowerCase();
     const list = Object.values(state.tags)
       .filter((t) => t.title.toLowerCase().includes(q))
-      .sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+      .sort((a, b) => a.title.localeCompare(b.title, i18n.lang()));
     const exact = list.some((t) => t.title.toLowerCase() === q);
     opts.innerHTML =
       list
@@ -1463,7 +1490,7 @@ function openTagPicker(anchor, task) {
           (t, i) => `<div class="opt ${i === 0 && q ? 'hl' : ''}" data-tag="${t.id}"><span class="swatch" style="background:${t.color}"></span>${esc(t.title)}
           ${task.tagIds.includes(t.id) ? `<span class="ok">✓</span>` : ''}</div>`
         )
-        .join('') + (q && !exact ? `<div class="opt" data-create="1">Создать «${esc(input.value.trim())}»</div>` : '');
+        .join('') + (q && !exact ? `<div class="opt" data-create="1">${tr('Создать «{name}»', { name: esc(input.value.trim()) })}</div>` : '');
   };
   const toggle = (id) => {
     task.tagIds = task.tagIds.includes(id) ? task.tagIds.filter((x) => x !== id) : [...task.tagIds, id];
@@ -1507,16 +1534,15 @@ function openEntityModal(kind, entity) {
   const modal = $('#modal');
   const isNew = !entity;
   let color = entity?.color || COLORS[(Object.keys(kind === 'project' ? state.projects : state.tags).length) % COLORS.length];
-  const label = kind === 'project' ? 'проект' : 'тег';
   modal.hidden = false;
   modal.innerHTML = `
     <div class="modal">
-      <h3>${isNew ? `Новый ${label}` : `Изменить ${label}`}</h3>
-      <input class="in" id="m-name" placeholder="Название" value="${esc(entity?.title || '')}" />
+      <h3>${tr(isNew ? (kind === 'project' ? 'Новый проект' : 'Новый тег') : kind === 'project' ? 'Изменить проект' : 'Изменить тег')}</h3>
+      <input class="in" id="m-name" placeholder="${tr('Название')}" value="${esc(entity?.title || '')}" />
       <div class="colors">${COLORS.map((c) => `<button data-color="${c}" class="${c === color ? 'on' : ''}" style="background:${c}"></button>`).join('')}</div>
       <div class="actions">
-        ${isNew ? '' : `<button class="btn danger" id="m-del">Удалить</button>`}
-        <div class="r"><button class="btn" id="m-cancel">Отмена</button><button class="btn primary" id="m-ok">${isNew ? 'Создать' : 'Сохранить'}</button></div>
+        ${isNew ? '' : `<button class="btn danger" id="m-del">${tr('Удалить')}</button>`}
+        <div class="r"><button class="btn" id="m-cancel">${tr('Отмена')}</button><button class="btn primary" id="m-ok">${isNew ? tr('Создать') : tr('Сохранить')}</button></div>
       </div>
     </div>`;
   const name = $('#m-name');
@@ -1552,8 +1578,8 @@ function openEntityModal(kind, entity) {
     if (e.target.id === 'm-del') {
       const n = Object.values(state.tasks).filter((t) => (kind === 'project' ? t.projectId === entity.id : t.tagIds.includes(entity.id))).length;
       const msg = kind === 'project'
-        ? `Удалить проект «${entity.title}»? ${n ? `${n} задач(и) останутся без проекта.` : ''}`
-        : `Удалить тег «${entity.title}»? Он будет снят с задач.`;
+        ? `${tr('Удалить проект «{name}»?', { name: entity.title })} ${n ? tr('{n} задач(и) останутся без проекта.', { n }) : ''}`
+        : tr('Удалить тег «{name}»? Он будет снят с задач.', { name: entity.title });
       if (!confirm(msg)) return;
       for (const t of Object.values(state.tasks)) {
         if (kind === 'project' && t.projectId === entity.id) t.projectId = null;
@@ -1577,21 +1603,21 @@ function openTimeModal(task) {
   modal.hidden = false;
   modal.innerHTML = `
     <div class="modal">
-      <h3>Добавить время</h3>
-      <div class="m-sub">${esc(task.title || 'Без названия')}</div>
-      <label class="m-lab" for="m-day">День</label>
+      <h3>${tr('Добавить время')}</h3>
+      <div class="m-sub">${esc(task.title || tr('Без названия'))}</div>
+      <label class="m-lab" for="m-day">${tr('День')}</label>
       <input class="in" type="date" id="m-day" value="${dayStr()}" max="${dayStr()}" />
-      <label class="m-lab">Сколько</label>
+      <label class="m-lab">${tr('Сколько')}</label>
       <div class="m-dur">
         ${durField(0, 'id="m-dur"')}
         <div class="quick">
-          <button class="btn" data-plus="15">+15 мин</button>
-          <button class="btn" data-plus="30">+30 мин</button>
-          <button class="btn" data-plus="60">+1 ч</button>
+          <button class="btn" data-plus="15">+15 ${tr('мин')}</button>
+          <button class="btn" data-plus="30">+30 ${tr('мин')}</button>
+          <button class="btn" data-plus="60">+1 ${tr('ч')}</button>
         </div>
       </div>
-      <div class="m-hint" id="m-hint">Будет добавлено к журналу времени задачи</div>
-      <div class="actions"><div class="r"><button class="btn" id="m-cancel">Отмена</button><button class="btn primary" id="m-ok">Добавить</button></div></div>
+      <div class="m-hint" id="m-hint">${tr('Будет добавлено к журналу времени задачи')}</div>
+      <div class="actions"><div class="r"><button class="btn" id="m-cancel">${tr('Отмена')}</button><button class="btn primary" id="m-ok">${tr('Добавить')}</button></div></div>
     </div>`;
   const dur = $('#m-dur');
   const hint = $('#m-hint');
@@ -1603,14 +1629,14 @@ function openTimeModal(task) {
   const refresh = () => {
     const ms = readDur(dur);
     hint.classList.remove('err');
-    hint.textContent = ms ? `Будет добавлено: ${fmtDur(ms)}` : 'Будет добавлено к журналу времени задачи';
+    hint.textContent = ms ? tr('Будет добавлено: {time}', { time: fmtDur(ms) }) : tr('Будет добавлено к журналу времени задачи');
   };
   const ok = () => {
     const ms = readDur(dur);
     const day = $('#m-day').value;
     if (!day) return $('#m-day').focus();
     if (!ms) {
-      hint.textContent = 'Укажите часы или минуты – или нажмите одну из кнопок выше';
+      hint.textContent = tr('Укажите часы или минуты – или нажмите одну из кнопок выше');
       hint.classList.add('err');
       return dur.querySelector('.dh').focus();
     }
@@ -1618,7 +1644,7 @@ function openTimeModal(task) {
     save();
     close();
     renderAll();
-    toast(`Добавлено ${fmtDur(ms)} · ${relDate(day).toLowerCase()}`);
+    toast(tr('Добавлено {time} · {day}', { time: fmtDur(ms), day: relDate(day).toLowerCase() }));
   };
   dur.addEventListener('input', refresh);
   modal.onclick = (e) => {
@@ -1643,7 +1669,7 @@ function openIdleModal() {
   closePopover();
   const modal = $('#modal');
   const mins = Math.max(1, Math.round((idle.to - idle.from) / 60000));
-  const away = mins >= 60 ? `${Math.floor(mins / 60)} ч${mins % 60 ? ` ${mins % 60} мин` : ''}` : `${mins} мин`;
+  const away = mins >= 60 ? `${Math.floor(mins / 60)} ${tr('ч')}${mins % 60 ? ` ${mins % 60} ${tr('мин')}` : ''}` : `${mins} ${tr('мин')}`;
   const cur = state.tasks[idle.taskId];
   const others = Object.values(state.tasks)
     .filter((t) => !t.done && t.id !== idle.taskId)
@@ -1655,32 +1681,32 @@ function openIdleModal() {
   const label = (t) => {
     const parent = t.parentId && state.tasks[t.parentId];
     const proj = state.projects[(parent || t).projectId];
-    return (parent ? `${parent.title} → ` : '') + (t.title || 'Без названия') + (proj ? ` · ${proj.title}` : '');
+    return (parent ? `${parent.title} → ` : '') + (t.title || tr('Без названия')) + (proj ? ` · ${proj.title}` : '');
   };
   modal.hidden = false;
   modal.innerHTML = `
     <div class="modal idle-modal">
-      <h3>Вас не было ${away}</h3>
-      <div class="m-sub">С ${fmtTimeOfDay(idle.from)} до ${fmtTimeOfDay(idle.to)} не было движения мыши и нажатий клавиш. Куда записать это время?</div>
+      <h3>${tr('Вас не было {time}', { time: away })}</h3>
+      <div class="m-sub">${tr('С {from} до {to} не было движения мыши и нажатий клавиш. Куда записать это время?', { from: fmtTimeOfDay(idle.from), to: fmtTimeOfDay(idle.to) })}</div>
       <div class="idle-opts">
         ${
           cur
             ? `<button class="idle-opt" data-idle="current">
-          <span class="t">Засчитать текущей задаче</span><span class="d">${esc(cur.title || 'Без названия')}</span></button>`
+          <span class="t">${tr('Засчитать текущей задаче')}</span><span class="d">${esc(cur.title || tr('Без названия'))}</span></button>`
             : ''
         }
         <div class="idle-opt other">
-          <span class="t">Засчитать другой задаче</span>
+          <span class="t">${tr('Засчитать другой задаче')}</span>
           <div class="row">
             <select class="in" id="idle-task">${
               others.length
                 ? others.map((t) => `<option value="${t.id}">${esc(label(t))}</option>`).join('')
-                : '<option value="">Нет других открытых задач</option>'
+                : `<option value="">${tr('Нет других открытых задач')}</option>`
             }</select>
-            <button class="btn" data-idle="other" ${others.length ? '' : 'disabled'}>Засчитать</button>
+            <button class="btn" data-idle="other" ${others.length ? '' : 'disabled'}>${tr('Засчитать')}</button>
           </div>
         </div>
-        <button class="idle-opt" data-idle="drop"><span class="t">Не учитывать</span><span class="d">Это был перерыв</span></button>
+        <button class="idle-opt" data-idle="drop"><span class="t">${tr('Не учитывать')}</span><span class="d">${tr('Это был перерыв')}</span></button>
       </div>
     </div>`;
   const resolve = (how) => {
@@ -1692,7 +1718,7 @@ function openIdleModal() {
     modal.innerHTML = '';
     save();
     renderAll();
-    if (target) toast(`${away} записано на «${target.title || 'Без названия'}»`);
+    if (target) toast(tr('{time} записано на «{title}»', { time: away, title: target.title || tr('Без названия') }));
   };
   // no closing by backdrop or Esc: the time has to go somewhere
   modal.onclick = (e) => {
@@ -1723,7 +1749,7 @@ function toast(msg, action) {
 async function doExport() {
   flushTracking();
   const ok = await window.flow.saveJson(`quill-track-backup-${dayStr()}.json`, JSON.stringify(state, null, 2));
-  if (ok) toast('Резервная копия сохранена');
+  if (ok) toast(tr('Резервная копия сохранена'));
 }
 
 async function doImportFlow() {
@@ -1732,17 +1758,19 @@ async function doImportFlow() {
   try {
     const data = JSON.parse(text);
     if (!data.tasks || !data.projects) throw new Error();
-    if (!confirm('Заменить текущие данные содержимым файла?')) return;
+    if (!confirm(tr('Заменить текущие данные содержимым файла?'))) return;
     state = Object.assign(DEFAULT_STATE(), data);
     state.settings = Object.assign(DEFAULT_SETTINGS(), data.settings);
+    state.settings.language ||= i18n.lang();
+    i18n.setLang(state.settings.language);
     state.current = null;
     ui.selected = null;
     saveNow();
     applyTheme();
     renderAll();
-    toast('Данные восстановлены');
+    toast(tr('Данные восстановлены'));
   } catch {
-    toast('Это не резервная копия Quill Track');
+    toast(tr('Это не резервная копия Quill Track'));
   }
 }
 
@@ -1768,8 +1796,8 @@ function removeWithUndo(id) {
   if (!t) return;
   const removed = deleteTask(id);
   renderAll();
-  toast(`Удалено: «${t.title || 'Без названия'}»`, {
-    label: 'Вернуть',
+  toast(tr('Удалено: «{title}»', { title: t.title || tr('Без названия') }), {
+    label: tr('Вернуть'),
     run: () => {
       restoreTasks(removed);
       renderAll();
@@ -1790,7 +1818,7 @@ document.addEventListener('click', (e) => {
     const wasDone = state.tasks[id]?.done;
     toggleDone(id);
     renderAll();
-    if (!wasDone) toast('Готово 🎉', { label: 'Отменить', run: () => { toggleDone(id); renderAll(); } });
+    if (!wasDone) toast(tr('Готово 🎉'), { label: tr('Отменить'), run: () => { toggleDone(id); renderAll(); } });
     return;
   }
   if ((n = el('[data-track]'))) {
@@ -1831,6 +1859,10 @@ document.addEventListener('click', (e) => {
     save();
     applyTheme();
     return renderMain();
+  }
+  if ((n = el('[data-lang-set]'))) {
+    setLanguage(n.dataset.langSet);
+    return;
   }
   if ((n = el('[data-sync-project]'))) {
     const s = state.settings.folderSync;
@@ -1879,16 +1911,6 @@ document.addEventListener('click', (e) => {
       renderMain();
     }
     if (a === 'toggle-sync') toggleFolderSync();
-    if (a === 'toggle-inbox') toggleInbox();
-    if (a === 'inbox-pick') {
-      window.flow.pickSyncDir('Папка для входящих изменений').then((dir) => {
-        if (!dir) return;
-        state.settings.inbox.dir = dir;
-        save();
-        checkInbox();
-      });
-    }
-    if (a === 'inbox-now') checkInbox();
     if (a === 'sync-pick') {
       window.flow.pickSyncDir().then((dir) => {
         if (!dir) return;
@@ -1897,7 +1919,7 @@ document.addEventListener('click', (e) => {
         writeSync();
       });
     }
-    if (a === 'sync-now') writeSync().then(() => !sync.error && toast('Файл в папке обновлён'));
+    if (a === 'sync-now') writeSync().then(() => !sync.error && toast(tr('Файл в папке обновлён')));
     if (a === 'update-check') window.flow.checkUpdate();
     if (a === 'update-install') window.flow.installUpdate();
     if (a === 'update-open') window.flow.openRelease();
@@ -1906,11 +1928,11 @@ document.addEventListener('click', (e) => {
     if (a === 'purge-done') {
       const cutoff = Date.now() - 30 * 86400000;
       const old = topLevel().filter((x) => x.done && (x.doneAt || 0) < cutoff);
-      if (!old.length) return toast('Нечего очищать');
-      if (!confirm(`Удалить ${old.length} старых выполненных задач?`)) return;
+      if (!old.length) return toast(tr('Нечего очищать'));
+      if (!confirm(tr('Удалить {n} старых выполненных задач?', { n: old.length }))) return;
       old.forEach((x) => deleteTask(x.id));
       renderAll();
-      toast(`Удалено ${old.length} задач`);
+      toast(tr('Удалено {n} задач', { n: old.length }));
     }
   }
 });
@@ -2057,8 +2079,18 @@ document.addEventListener('keydown', (e) => {
 
 let dragId = null;
 let dragProjectId = null;
+let dragSubId = null;
+const topRow = '.task[draggable]:not(.sub)';
 
 document.addEventListener('dragstart', (e) => {
+  const sub = e.target.closest?.('[data-sub]');
+  if (sub) {
+    dragSubId = sub.dataset.sub;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragSubId);
+    requestAnimationFrame(() => sub.classList.add('dragging'));
+    return;
+  }
   const proj = e.target.closest?.('.nav-item[data-nav="project"]');
   if (proj) {
     dragProjectId = proj.dataset.id;
@@ -2067,7 +2099,7 @@ document.addEventListener('dragstart', (e) => {
     requestAnimationFrame(() => proj.classList.add('dragging'));
     return;
   }
-  const row = e.target.closest('.task[draggable]');
+  const row = e.target.closest(topRow);
   if (!row) return;
   dragId = row.dataset.task;
   e.dataTransfer.effectAllowed = 'move';
@@ -2078,6 +2110,7 @@ document.addEventListener('dragstart', (e) => {
 document.addEventListener('dragend', () => {
   dragId = null;
   dragProjectId = null;
+  dragSubId = null;
   $$('.dragging, .drag-over-top, .drag-over-bottom, .drop-target').forEach((el) =>
     el.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom', 'drop-target')
   );
@@ -2091,7 +2124,25 @@ function projectDropSpot(e) {
   return { item, before: e.clientY < r.top + r.height / 2 };
 }
 
+// Subtasks are reordered within their parent, in the list and in the detail panel
+function subDropSpot(e) {
+  const item = e.target.closest('[data-sub]');
+  if (!item || item.dataset.sub === dragSubId) return null;
+  if (state.tasks[item.dataset.sub]?.parentId !== state.tasks[dragSubId]?.parentId) return null;
+  const r = item.getBoundingClientRect();
+  return { item, before: e.clientY < r.top + r.height / 2 };
+}
+
 document.addEventListener('dragover', (e) => {
+  if (dragSubId) {
+    $$('.drag-over-top, .drag-over-bottom').forEach((el) => el.classList.remove('drag-over-top', 'drag-over-bottom'));
+    const spot = subDropSpot(e);
+    if (spot) {
+      e.preventDefault();
+      spot.item.classList.add(spot.before ? 'drag-over-top' : 'drag-over-bottom');
+    }
+    return;
+  }
   if (dragProjectId) {
     $$('.drag-over-top, .drag-over-bottom').forEach((el) => el.classList.remove('drag-over-top', 'drag-over-bottom'));
     const spot = projectDropSpot(e);
@@ -2103,7 +2154,7 @@ document.addEventListener('dragover', (e) => {
   }
   if (!dragId) return;
   const nav = e.target.closest('[data-drop]');
-  const row = e.target.closest('.task[draggable]');
+  const row = e.target.closest(topRow);
   $$('.drag-over-top, .drag-over-bottom, .drop-target').forEach((el) => el.classList.remove('drag-over-top', 'drag-over-bottom', 'drop-target'));
   if (nav) {
     e.preventDefault();
@@ -2116,6 +2167,19 @@ document.addEventListener('dragover', (e) => {
 });
 
 document.addEventListener('drop', (e) => {
+  if (dragSubId) {
+    const spot = subDropSpot(e);
+    if (!spot) return;
+    e.preventDefault();
+    const parent = state.tasks[state.tasks[dragSubId].parentId];
+    const ids = parent.subIds.filter((id) => id !== dragSubId);
+    ids.splice(ids.indexOf(spot.item.dataset.sub) + (spot.before ? 0 : 1), 0, dragSubId);
+    parent.subIds = ids;
+    save();
+    renderMain();
+    renderDetail();
+    return;
+  }
   if (dragProjectId) {
     const spot = projectDropSpot(e);
     if (!spot) return;
@@ -2140,14 +2204,13 @@ document.addEventListener('drop', (e) => {
     if (kind === 'project' || kind === 'inbox') t.subIds.forEach((s) => state.tasks[s] && (state.tasks[s].projectId = t.projectId));
     save();
     renderAll();
-    const label = kind === 'today' ? 'на сегодня' : kind === 'inbox' ? 'в «Без проекта»' : `в «${nav.querySelector('.label').textContent}»`;
-    toast(`Перемещено ${label}`);
+    toast(kind === 'today' ? tr('Перемещено на сегодня') : tr('Перемещено в «{name}»', { name: nav.querySelector('.label').textContent }));
     return;
   }
-  const row = e.target.closest('.task[draggable]');
+  const row = e.target.closest(topRow);
   if (!row || row.dataset.task === dragId) return;
   const group = row.closest('.tasks');
-  const ids = $$('.task[draggable]', group).map((r) => r.dataset.task).filter((id) => id !== dragId);
+  const ids = $$(topRow, group).map((r) => r.dataset.task).filter((id) => id !== dragId);
   const r = row.getBoundingClientRect();
   let idx = ids.indexOf(row.dataset.task) + (e.clientY < r.top + r.height / 2 ? 0 : 1);
   const prev = state.tasks[ids[idx - 1]];
@@ -2164,13 +2227,18 @@ document.addEventListener('drop', (e) => {
    Boot
    ========================================================= */
 
+// nothing to keep until the first-start language choice is made
+let booted = false;
+
 window.addEventListener('beforeunload', () => {
+  if (!booted) return;
   flushTracking();
   window.flow.save(state);
 });
 
 // "Выход" from the tray: write everything, then let main quit
 window.flow.onBeforeQuit(async () => {
+  if (!booted) return window.flow.quitReady();
   flushTracking();
   if (idle) {
     // nobody answered the away dialog; keep the time rather than lose it
@@ -2201,6 +2269,8 @@ window.flow.onUpdateState(updateChanged);
 
 (async function boot() {
   await load();
+  booted = true;
+  document.documentElement.lang = state.settings.language;
   update = await window.flow.getUpdate();
   autostart = await window.flow.getAutostart();
   applyTheme();
